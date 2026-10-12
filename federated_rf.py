@@ -73,7 +73,7 @@ CONFIG = {
     # Step 8: convergence criteria
     "max_rounds": 30,  # R_max
     "patience": 3,  # P
-    "min_delta": 0.002,  # delta (minimum MCC improvement)
+    "min_delta": 0.001,  # delta (minimum MCC improvement)
 }
 
 TARGET = "target"
@@ -310,18 +310,70 @@ def fmt_bytes(b):
         b /= 1024
 
 
-def metrics_table(title, results, names):
+AVERAGE = "Average (clients)"
+PARTY_STYLE = {AVERAGE: "bold yellow", GLOBAL: "bold green"}
+COST_COLS = ["Uplink", "Downlink", "Train (s)", "Val (s)", "Agg (s)", "Total (s)"]
+
+
+def metrics_table(title, results):
     t = Table(title=title, box=box.ROUNDED, header_style="bold cyan", title_style="bold")
-    t.add_column("Client", style="bold")
+    t.add_column("Party", style="bold")
     for m in METRIC_NAMES:
         t.add_column(m, justify="right")
-    t.add_column("n (test)", justify="right", style="dim")
-    for name in names:
-        r = results[name]
-        style = "bold green" if name == GLOBAL else None
-        n = r["TP"] + r["TN"] + r["FP"] + r["FN"]
-        t.add_row(name, *[f"{r[m]:.4f}" for m in METRIC_NAMES], str(n), style=style)
+    for name, r in results.items():
+        t.add_row(name, *[f"{r[m]:.4f}" for m in METRIC_NAMES], style=PARTY_STYLE.get(name))
     return t
+
+
+def party_table(title, rows):
+    """Metrics + communication + computation cost, one row per party."""
+    t = Table(title=title, title_justify="left", box=box.ROUNDED, header_style="bold cyan", title_style="bold")
+    t.add_column("Party", style="bold")
+    for m in METRIC_NAMES:
+        t.add_column(m.replace(" Score", ""), justify="right")
+    for col in COST_COLS:
+        t.add_column(col, justify="right", style="magenta" if col in ("Uplink", "Downlink") else "blue")
+    for name, r in rows.items():
+        t.add_row(name, *[f"{r[m]:.4f}" for m in METRIC_NAMES], fmt_bytes(r["Uplink"]), fmt_bytes(r["Downlink"]),
+                  *[f"{r[c]:.4f}" if r[c] else "–" for c in COST_COLS[2:]], style=PARTY_STYLE.get(name))
+    return t
+
+
+def evaluate_parties(model, clients):
+    """Test metrics per client, their average, and on the pooled test set (global server)."""
+    results, preds = {}, {}
+    for c in clients:
+        prob = model.predict_proba(c.X_test)
+        preds[c.name] = (c.y_test, prob)
+        results[c.name] = compute_metrics(c.y_test, (prob >= 0.5).astype(int), prob)
+    results[AVERAGE] = {m: float(np.mean([results[c.name][m] for c in clients])) for m in METRIC_NAMES}
+    y = np.concatenate([preds[c.name][0] for c in clients])
+    p = np.concatenate([preds[c.name][1] for c in clients])
+    results[GLOBAL] = compute_metrics(y, (p >= 0.5).astype(int), p)
+    return results, preds
+
+
+def cost_rows(rnd, clients, comm, comp):
+    """Communication (bytes) and computation (seconds) of one round per client, their average and the server."""
+    comm, comp = comm[comm["round"] == rnd], comp[comp["round"] == rnd]
+
+    def secs(party, task):
+        return comp[(comp.party == party) & (comp.task == task)].seconds.sum()
+
+    rows = {}
+    for c in clients:
+        cc = comm[comm.party == c.name]
+        r = {"Uplink": int(cc[cc.direction == "uplink"].bytes.sum()),
+             "Downlink": int(cc[cc.direction == "downlink"].bytes.sum()),
+             "Train (s)": secs(c.name, "local training"), "Val (s)": secs(c.name, "validation"), "Agg (s)": 0.0}
+        r["Total (s)"] = r["Train (s)"] + r["Val (s)"]
+        rows[c.name] = r
+    rows[AVERAGE] = {k: float(np.mean([rows[c.name][k] for c in clients])) for k in COST_COLS}
+    agg = secs("Server", "aggregation")
+    rows[GLOBAL] = {"Uplink": int(comm[comm.direction == "uplink"].bytes.sum()),
+                    "Downlink": int(comm[comm.direction == "downlink"].bytes.sum()),
+                    "Train (s)": 0.0, "Val (s)": 0.0, "Agg (s)": agg, "Total (s)": agg}
+    return rows
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -398,25 +450,22 @@ def main():
     step("4–8", "Iterative Federated Training")
     console.print(f"T_c = {cfg['trees_per_client']} trees per client · K = {len(clients)} clients · "
                   f"R_max = {cfg['max_rounds']} · patience = {cfg['patience']} · δ = {cfg['min_delta']} · "
-                  f"tree selection = {'on' if cfg['tree_selection'] else 'off'}\n")
+                  f"tree selection = {'on' if cfg['tree_selection'] else 'off'}")
+    console.print("[dim]Each round: metrics of the round's global model on every client's test set (reporting only; "
+                  "model selection uses the validation MCC), plus that round's communication and computation cost.[/dim]")
     server = FederatedServer(clients, feature_names)
     keep = cfg["trees_per_client"] * len(clients)  # K × T_c
     best = {"mcc": -np.inf, "round": 0, "trees": None}
     no_improve = 0
-
-    rt = Table(box=box.SIMPLE_HEAVY, header_style="bold cyan")
-    for col in ["Round", "Trees (pool → kept)", "Val Acc", "Val MCC", "Δ vs best", "Uplink", "Downlink",
-                "Round time*", "Status"]:
-        rt.add_column(col, justify="right")
+    round_rows = []  # one row per (round, party): metrics + costs
 
     for rnd in range(1, cfg["max_rounds"] + 1):
         # STEP 4 · local training in parallel (simulated sequentially)
-        local_forests, client_times = {}, {}
+        local_forests = {}
         for c in clients:
             t0 = time.perf_counter()
             local_forests[c.name] = c.train_local_forest(cfg["trees_per_client"], seed=rng_seed + 1000 * rnd + c.cid)
-            client_times[c.name] = time.perf_counter() - t0
-            COMP.log(rnd, c.name, "local training", client_times[c.name])
+            COMP.log(rnd, c.name, "local training", time.perf_counter() - t0)
 
         # STEP 5 · clients upload their trees (model parameters / tree structures)
         tree_bytes = {}
@@ -474,20 +523,23 @@ def main():
             no_improve, status = 0, "[green]★ new best[/green]"
         else:
             no_improve += 1
-            status = f"[yellow]no gain {no_improve}/{cfg['patience']}[/yellow]"
+            status = f"[yellow]no improvement {no_improve}/{cfg['patience']}[/yellow]"
 
-        comm = COMM.frame()
-        comm_r = comm[comm["round"] == rnd]
-        up = comm_r[comm_r.direction == "uplink"].bytes.sum()
-        down = comm_r[comm_r.direction == "downlink"].bytes.sum()
-        comp = COMP.frame()
-        comp_r = comp[comp["round"] == rnd]
-        parallel_time = comp_r[comp_r.party != "Server"].groupby("party").seconds.sum().max() + agg_time
+        # Round report: metrics + communication + computation for every party
+        results_r, _ = evaluate_parties(model, clients)
+        rows = cost_rows(rnd, clients, COMM.frame(), COMP.frame())
+        for party, row in rows.items():
+            row.update({m: results_r[party][m] for m in METRIC_NAMES})
+            round_rows.append({"round": rnd, "party": party, **row})
+        parallel_time = max(rows[c.name]["Total (s)"] for c in clients) + agg_time
         server.history.append({"round": rnd, "val_mcc": val_mcc, "val_acc": val_acc, "pool": len(pool),
-                               "kept": len(selected), "uplink_bytes": int(up), "downlink_bytes": int(down),
+                               "kept": len(selected), "uplink_bytes": rows[GLOBAL]["Uplink"],
+                               "downlink_bytes": rows[GLOBAL]["Downlink"],
                                "round_time_parallel_s": parallel_time, "best": rnd == best["round"]})
-        rt.add_row(str(rnd), f"{len(pool)} → {len(selected)}", f"{val_acc:.4f}", f"{val_mcc:.4f}",
-                   f"{delta:+.4f}", fmt_bytes(up), fmt_bytes(down), f"{parallel_time:.2f} s", status)
+        title = (f"Round {rnd}  ·  trees {len(pool)} → {len(selected)}  ·  val Acc {val_acc:.4f}  ·  "
+                 f"val MCC {val_mcc:.4f} ({delta:+.4f})  ·  parallel round time {parallel_time:.3f} s  ·  {status}")
+        console.print()
+        console.print(party_table(title, {**{p: rows[p] for p in rows}}))
 
         if no_improve >= cfg["patience"]:
             stop_reason = f"no MCC improvement > {cfg['min_delta']} for {cfg['patience']} consecutive rounds"
@@ -495,122 +547,51 @@ def main():
     else:
         stop_reason = f"reached R_max = {cfg['max_rounds']}"
 
-    console.print(rt)
-    console.print("[dim]* simulated parallel round time = slowest client (training + validation) + server aggregation[/dim]")
+    console.print("[dim]Uplink/Downlink of Global (server) = total bytes received/sent by the server. "
+                  "Total (s) = training + validation + aggregation. Parallel round time = slowest client + "
+                  "server aggregation.[/dim]")
     console.print(Panel.fit(
         f"Stopped after round [bold]{rnd}[/bold]: {stop_reason}.\n"
         f"Best global model: round [bold]{best['round']}[/bold] · validation MCC [bold]{best['mcc']:.4f}[/bold] · "
         f"{len(best['trees'])} trees", title="Convergence", border_style="green"))
     final_model = GlobalForest(best["trees"], feature_names)
+    rounds_run = len(server.history)
+    per_round = pd.DataFrame(round_rows)
 
     # ── STEP 9 ─────────────────────────────────────────────────────────────
     step(9, "Final Model Evaluation on the Test Set")
-    results, preds = {}, {}
-    for c in clients:
-        prob = final_model.predict_proba(c.X_test)
-        y_pred = (prob >= 0.5).astype(int)
-        results[c.name] = compute_metrics(c.y_test, y_pred, prob)
-        preds[c.name] = (c.y_test, y_pred, prob)
-    y_all = np.concatenate([preds[c.name][0] for c in clients])
-    p_all = np.concatenate([preds[c.name][2] for c in clients])
-    yhat_all = (p_all >= 0.5).astype(int)
-    results[GLOBAL] = compute_metrics(y_all, yhat_all, p_all)
-    preds[GLOBAL] = (y_all, yhat_all, p_all)
-    names = HOSPITALS + [GLOBAL]
-    console.print(metrics_table("Federated global model · test-set metrics", results, names))
+    results, _ = evaluate_parties(final_model, clients)
+    console.print(metrics_table(f"Best global model (round {best['round']}) · test-set metrics", results))
 
-    cm = Table(title="Confusion matrices (test set)", box=box.ROUNDED, header_style="bold cyan", title_style="bold")
-    for col in ["Client", "TP", "FN", "FP", "TN", "AUC"]:
-        cm.add_column(col, justify="right" if col != "Client" else "left")
-    for n in names:
-        r = results[n]
-        cm.add_row(n, str(r["TP"]), str(r["FN"]), str(r["FP"]), str(r["TN"]),
-                   f"{r['AUC']:.4f}" if "AUC" in r else "–", style="bold green" if n == GLOBAL else None)
-    console.print(cm)
+    # Averages over all rounds
+    step("9b", "Averages over all rounds")
+    avg = per_round.groupby("party", sort=False)[METRIC_NAMES + COST_COLS].mean()
+    console.print(party_table(f"Average per round over {rounds_run} rounds · metrics, communication and computation",
+                              {p: avg.loc[p].to_dict() for p in avg.index}))
 
-    # Baselines: isolated local training and (privacy-violating) centralized training
-    n_trees_total = keep
-    baselines = {"Local only": {}, "Centralized": {}}
-    for c in clients:
-        rf = RandomForestClassifier(n_estimators=n_trees_total, random_state=rng_seed, **cfg["rf_params"])
-        rf.fit(c.X_train, c.y_train)
-        baselines["Local only"][c.name] = compute_metrics(c.y_test, rf.predict(c.X_test))
-    X_pool = np.vstack([np.vstack([c.X_train, c.X_val]) for c in clients])
-    y_pool = np.concatenate([np.concatenate([c.y_train, c.y_val]) for c in clients])
-    central = RandomForestClassifier(n_estimators=n_trees_total, random_state=rng_seed, **cfg["rf_params"])
-    central.fit(X_pool, y_pool)
-    for c in clients:
-        baselines["Centralized"][c.name] = compute_metrics(c.y_test, central.predict(c.X_test))
-    X_te = np.vstack([c.X_test for c in clients])
-    baselines["Centralized"][GLOBAL] = compute_metrics(y_all, central.predict(X_te))
-    baselines["Federated"] = results
+    tot = per_round.groupby("party", sort=False)[COST_COLS].sum()
+    tt = Table(title=f"Total cost over all {rounds_run} rounds", box=box.ROUNDED, header_style="bold cyan",
+               title_style="bold")
+    tt.add_column("Party", style="bold")
+    for col in COST_COLS:
+        tt.add_column(col, justify="right")
+    for p in tot.index:
+        r = tot.loc[p]
+        tt.add_row(p, fmt_bytes(r["Uplink"]), fmt_bytes(r["Downlink"]),
+                   *[f"{r[c]:.4f}" if r[c] else "–" for c in COST_COLS[2:]], style=PARTY_STYLE.get(p))
+    console.print(tt)
 
-    bt = Table(title="Federated vs. baselines (test MCC / Accuracy)", box=box.ROUNDED,
-               header_style="bold cyan", title_style="bold")
-    bt.add_column("Client", style="bold")
-    for meth in ["Local only", "Federated", "Centralized"]:
-        bt.add_column(f"{meth}\nMCC", justify="right")
-        bt.add_column(f"{meth}\nAcc", justify="right")
-    for n in names:
-        row = [n]
-        for meth in ["Local only", "Federated", "Centralized"]:
-            r = baselines[meth].get(n)
-            row += [f"{r['MCC']:.4f}", f"{r['Accuracy']:.4f}"] if r else ["–", "–"]
-        bt.add_row(*row, style="bold green" if n == GLOBAL else None)
-    console.print(bt)
-    console.print("[dim]Local only: each hospital trains alone on its own data. Centralized: all data pooled "
-                  "in one place (upper bound, not privacy-preserving).[/dim]")
-
-    # Communication & computation cost
-    step("9b", "Communication and Computation Cost")
     comm, comp = COMM.frame(), COMP.frame()
-    ct = Table(title="Communication cost per client (all rounds)", box=box.ROUNDED,
-               header_style="bold cyan", title_style="bold")
-    for col in ["Client", "Uplink", "Downlink", "Total", "Messages", "Avg / round"]:
-        ct.add_column(col, justify="right" if col != "Client" else "left")
-    rounds_run = len(server.history)
-    for c in clients:
-        cc = comm[comm.party == c.name]
-        up, down = cc[cc.direction == "uplink"].bytes.sum(), cc[cc.direction == "downlink"].bytes.sum()
-        ct.add_row(c.name, fmt_bytes(up), fmt_bytes(down), fmt_bytes(up + down), str(len(cc)),
-                   fmt_bytes((up + down) / rounds_run))
-    up, down = comm[comm.direction == "uplink"].bytes.sum(), comm[comm.direction == "downlink"].bytes.sum()
-    ct.add_row("All clients", fmt_bytes(up), fmt_bytes(down), fmt_bytes(up + down), str(len(comm)),
-               fmt_bytes((up + down) / rounds_run), style="bold green")
-    console.print(ct)
-
-    pt = Table(title="Communication cost by payload", box=box.ROUNDED, header_style="bold cyan", title_style="bold")
-    for col in ["Payload", "Direction", "Total", "Share"]:
-        pt.add_column(col, justify="right" if col in ("Total", "Share") else "left")
-    by_payload = comm.groupby(["payload", "direction"]).bytes.sum().sort_values(ascending=False)
-    for (payload, direction), b in by_payload.items():
-        pt.add_row(payload, direction, fmt_bytes(b), f"{100 * b / (up + down):.2f} %")
-    console.print(pt)
-
+    par_total = sum(h["round_time_parallel_s"] for h in server.history)
     raw_bytes = sum(nbytes(np.vstack([c.X_train, c.X_val])) + nbytes(np.concatenate([c.y_train, c.y_val]))
                     for c in clients)
-    console.print(f"Final global model: {len(final_model.trees)} trees · {final_model.n_nodes:,} nodes · "
-                  f"{fmt_bytes(nbytes(final_model.trees))} serialized.  For reference, uploading the raw training "
-                  f"data once would be {fmt_bytes(raw_bytes)} — and would expose patient records.")
-
-    tt = Table(title="Computation cost (wall-clock seconds)", box=box.ROUNDED, header_style="bold cyan",
-               title_style="bold")
-    for col in ["Party", "Local training", "Validation", "Aggregation", "Total", "Avg / round"]:
-        tt.add_column(col, justify="right" if col != "Party" else "left")
-    for party in [c.name for c in clients] + ["Server"]:
-        pc = comp[comp.party == party]
-        tr = pc[pc.task == "local training"].seconds.sum()
-        va = pc[pc.task == "validation"].seconds.sum()
-        ag = pc[pc.task == "aggregation"].seconds.sum()
-        tt.add_row(party, f"{tr:.3f}", f"{va:.3f}", f"{ag:.4f}", f"{tr + va + ag:.3f}",
-                   f"{(tr + va + ag) / rounds_run:.3f}")
-    seq_total = comp.seconds.sum()
-    par_total = sum(h["round_time_parallel_s"] for h in server.history)
-    tt.add_row("All (sequential)", "", "", "", f"{seq_total:.3f}", f"{seq_total / rounds_run:.3f}",
-               style="bold green")
-    console.print(tt)
-    console.print(f"Simulated parallel training time: [bold]{par_total:.2f} s[/bold] over {rounds_run} rounds "
-                  f"(vs. {seq_total:.2f} s sequential)")
+    console.print(f"Simulated parallel training time: [bold]{par_total:.3f} s[/bold] "
+                  f"(avg {par_total / rounds_run:.3f} s per round) vs. {comp.seconds.sum():.3f} s sequential.\n"
+                  f"One-off setup (federated imputation): "
+                  f"{fmt_bytes(comm[comm['round'] == 0].bytes.sum())}, not included in the per-round tables.\n"
+                  f"Final global model: {len(final_model.trees)} trees · {final_model.n_nodes:,} nodes · "
+                  f"{fmt_bytes(nbytes(final_model.trees))} serialized. Uploading the raw training data once would be "
+                  f"{fmt_bytes(raw_bytes)}, and would expose patient records.")
 
     # ── STEP 10 ────────────────────────────────────────────────────────────
     step(10, "Final Model and Deployment")
@@ -629,22 +610,18 @@ def main():
     # ── Save results & figures ───────────────────────────────────────────
     hist = pd.DataFrame(server.history)
     hist.to_csv(out_dir / "training_history.csv", index=False)
+    per_round.to_csv(out_dir / "round_metrics_and_costs.csv", index=False)
+    avg.to_csv(out_dir / "averages_over_rounds.csv")
     comm.to_csv(out_dir / "communication_cost.csv", index=False)
     comp.to_csv(out_dir / "computation_cost.csv", index=False)
     pd.DataFrame(results).T.to_csv(out_dir / "test_metrics.csv")
     with open(out_dir / "summary.json", "w") as f:
         json.dump({"best_round": best["round"], "best_val_mcc": best["mcc"], "rounds_run": rounds_run,
-                   "stop_reason": stop_reason, "test_metrics": results,
-                   "baselines": {k: v for k, v in baselines.items() if k != "Federated"}}, f, indent=2, default=float)
+                   "stop_reason": stop_reason, "test_metrics": results}, f, indent=2, default=float)
 
     step("★", "Figures")
-    data_summary = {c.name: {"train": len(c.y_train), "val": len(c.y_val), "test": len(c.y_test),
-                             "pos": int(np.concatenate([c.y_train, c.y_val, c.y_test]).sum()),
-                             "neg": int((1 - np.concatenate([c.y_train, c.y_val, c.y_test])).sum())}
-                     for c in clients}
-    files = fl_plots.make_all(
-        out_dir / "figures", data=data_summary, history=hist, best_round=best["round"], cfg=cfg,
-        results=results, preds=preds, baselines=baselines, comm=comm, comp=comp, clients=HOSPITALS, global_name=GLOBAL)
+    files = fl_plots.make_all(out_dir / "figures", history=hist, best_round=best["round"], cfg=cfg, results=results,
+                              per_round=per_round, clients=HOSPITALS, global_name=GLOBAL)
     for fpath in files:
         console.print(f"  • {fpath.relative_to(ROOT)}")
     console.print(f"\n[bold green]Done[/bold green] in {time.perf_counter() - t_start:.1f} s.")

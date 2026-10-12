@@ -2,7 +2,7 @@
   "best_round": 1,
   "best_val_mcc": 0.7629126907492596,
   "rounds_run": 4,
-  "stop_reason": "no MCC improvement > 0.002 for 3 consecutive rounds",
+  "stop_reason": "no MCC improvement > 0.001 for 3 consecutive rounds",
   "test_metrics": {
     "Hungary": {
       "Accuracy": 0.9830508474576272,
@@ -60,6 +60,15 @@
       "FN": 6,
       "AUC": 0.7922077922077922
     },
+    "Average (clients)": {
+      "Accuracy": 0.8573405807168658,
+      "Precision": 0.8712121212121212,
+      "Recall": 0.9019151138716356,
+      "Specificity": 0.5916666666666667,
+      "F1 Score": 0.8845477681943095,
+      "MCC": 0.5261297931664454,
+      "Kappa": 0.5201401079940801
+    },
     "Global (server)": {
       "Accuracy": 0.8594594594594595,
       "Precision": 0.8518518518518519,
@@ -73,129 +82,6 @@
       "FP": 16,
       "FN": 10,
       "AUC": 0.9104653909756675
-    }
-  },
-  "baselines": {
-    "Local only": {
-      "Hungary": {
-        "Accuracy": 1.0,
-        "Precision": 1.0,
-        "Recall": 1.0,
-        "Specificity": 1.0,
-        "F1 Score": 1.0,
-        "MCC": 1.0,
-        "Kappa": 1.0,
-        "TP": 21,
-        "TN": 38,
-        "FP": 0,
-        "FN": 0
-      },
-      "Switzerland": {
-        "Accuracy": 0.8,
-        "Precision": 0.9090909090909091,
-        "Recall": 0.8695652173913043,
-        "Specificity": 0.0,
-        "F1 Score": 0.8888888888888888,
-        "MCC": -0.10889310129609417,
-        "Kappa": -0.10619469026548689,
-        "TP": 20,
-        "TN": 0,
-        "FP": 2,
-        "FN": 3
-      },
-      "VA Long Beach": {
-        "Accuracy": 0.875,
-        "Precision": 0.9032258064516129,
-        "Recall": 0.9333333333333333,
-        "Specificity": 0.7,
-        "F1 Score": 0.9180327868852459,
-        "MCC": 0.6567360733292693,
-        "Kappa": 0.6551724137931034,
-        "TP": 28,
-        "TN": 7,
-        "FP": 3,
-        "FN": 2
-      },
-      "Cleveland": {
-        "Accuracy": 0.7540983606557377,
-        "Precision": 0.6857142857142857,
-        "Recall": 0.8571428571428571,
-        "Specificity": 0.6666666666666666,
-        "F1 Score": 0.7619047619047619,
-        "MCC": 0.5278234485917683,
-        "Kappa": 0.514073287307488,
-        "TP": 24,
-        "TN": 22,
-        "FP": 11,
-        "FN": 4
-      }
-    },
-    "Centralized": {
-      "Hungary": {
-        "Accuracy": 0.9661016949152542,
-        "Precision": 1.0,
-        "Recall": 0.9047619047619048,
-        "Specificity": 1.0,
-        "F1 Score": 0.95,
-        "MCC": 0.9271050693011065,
-        "Kappa": 0.9244558258642765,
-        "TP": 19,
-        "TN": 38,
-        "FP": 0,
-        "FN": 2
-      },
-      "Switzerland": {
-        "Accuracy": 0.84,
-        "Precision": 0.9130434782608695,
-        "Recall": 0.9130434782608695,
-        "Specificity": 0.0,
-        "F1 Score": 0.9130434782608695,
-        "MCC": -0.08695652173913043,
-        "Kappa": -0.08695652173913038,
-        "TP": 21,
-        "TN": 0,
-        "FP": 2,
-        "FN": 2
-      },
-      "VA Long Beach": {
-        "Accuracy": 0.9,
-        "Precision": 0.90625,
-        "Recall": 0.9666666666666667,
-        "Specificity": 0.7,
-        "F1 Score": 0.9354838709677419,
-        "MCC": 0.7216878364870322,
-        "Kappa": 0.7142857142857143,
-        "TP": 29,
-        "TN": 7,
-        "FP": 3,
-        "FN": 1
-      },
-      "Cleveland": {
-        "Accuracy": 0.7540983606557377,
-        "Precision": 0.7096774193548387,
-        "Recall": 0.7857142857142857,
-        "Specificity": 0.7272727272727273,
-        "F1 Score": 0.7457627118644068,
-        "MCC": 0.5113295384991638,
-        "Kappa": 0.5088566827697263,
-        "TP": 22,
-        "TN": 24,
-        "FP": 9,
-        "FN": 6
-      },
-      "Global (server)": {
-        "Accuracy": 0.8648648648648649,
-        "Precision": 0.8666666666666667,
-        "Recall": 0.8921568627450981,
-        "Specificity": 0.8313253012048193,
-        "F1 Score": 0.8792270531400966,
-        "MCC": 0.7263188541406232,
-        "Kappa": 0.7259259259259259,
-        "TP": 91,
-        "TN": 69,
-        "FP": 14,
-        "FN": 11
-      }
     }
   }
 }

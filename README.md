@@ -13,8 +13,8 @@ python3 federated_rf.py
 |---|---|
 | `federated_rf.py` | The full pipeline, one section per algorithm step (1–10), including the hospital split |
 | `fl_plots.py` | Publication-quality figures (300-dpi PNG + vector PDF) |
-| `results/` | Metrics, round history, communication / computation cost CSVs, saved global model |
-| `results/figures/` | Figures 1–9 |
+| `results/` | Per-round metrics and costs, averages, test metrics, saved global model |
+| `results/figures/` | Convergence, test metrics, uplink, downlink and computation cost figures |
 
 ## Algorithm
 
@@ -29,12 +29,13 @@ python3 federated_rf.py
    highest federated validation MCC from the new trees plus the previous global forest.
 7. **Validation**: clients evaluate the global forest locally and return only confusion counts; the
    server computes the MCC.
-8. **Convergence**: stop when MCC improves by less than δ = 0.002 for 3 rounds, or at round 30;
+8. **Convergence**: stop when MCC improves by less than δ = 0.001 for 3 rounds, or at round 30;
    keep the best round's model.
-9. **Evaluation**: Accuracy, Precision, Recall, Specificity, F1, MCC, Cohen's Kappa (and AUC) on every
-   hospital's test set and on the pooled test set, compared with local-only and centralized baselines.
-   Communication (bytes per payload, direction and client) and computation (wall-clock per party and task)
-   costs are reported.
+9. **Evaluation**: every round prints Accuracy, Precision, Recall, Specificity, F1, MCC and Cohen's Kappa
+   for each hospital, the client average and the global server (pooled test set), together with that round's
+   uplink / downlink bytes and local training, validation and aggregation time. The test set is only reported
+   per round; model selection uses the validation MCC. At the end the best model's test metrics, the averages
+   over all rounds and the total costs are printed.
 10. **Deployment**: the global model is saved with joblib and used to score an example patient.
 
 ## Data
