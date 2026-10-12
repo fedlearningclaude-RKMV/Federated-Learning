@@ -22,8 +22,7 @@ python -m pytest            # unit and pipeline tests
 | `fedrf_diff/privacy.py` | Laplace DP on every leaf vector, epsilon schedule, privacy accountant |
 | `fedrf_diff/zkp.py` | Modified Pedersen ZKP (pedersen2048 group, lambda = 2) binding each update to its sender, round and schema |
 | `fedrf_diff/client.py` | Hospital client: train, export, privatize, serialize, prove, score the global forest |
-| `fedrf_diff/decoder.py` | Step 6 server-side decoding and validation of every tree |
-| `fedrf_diff/server.py` | Authentication, global forest update (concatenation, optional per-client cap), global metrics |
+| `fedrf_diff/server.py` | Authentication, Step 6 validation of every received tree, global forest update (concatenation, optional per-client cap), global metrics |
 | `fedrf_diff/convergence.py` | Section 4 combined convergence criterion |
 | `fedrf_diff/metrics.py` | Accuracy, precision, recall, specificity, F1, MCC, Cohen's kappa from confusion counts |
 | `fedrf_diff/pipeline.py` | The round loop and the accuracy-vs-DP-budget experiment |
@@ -64,7 +63,7 @@ Statlog is Cleveland Clinic data, so it joins the Cleveland client, and its copi
 
 ## Outputs (`outputs/run/`)
 
-`validation_metrics.csv`, `zkp_times.csv`, `encoding_decoding_times.csv` (including tree validation results),
+`validation_metrics.csv`, `zkp_times.csv`, `tree_transfer_times.csv` (serialization and server tree-validation times, accepted/rejected trees),
 `communication_computation_cost.csv`, `convergence.csv` (ΔM, ΔP, stable rounds, DP budget per round),
 `dp_budget_accuracy.csv`, and `global_forest.json` (the final global forest as explicit trees).
 The figures are `convergence`, `zkp_times`, `computation_cost`, `communication_cost` and `accuracy_vs_dp_budget`.

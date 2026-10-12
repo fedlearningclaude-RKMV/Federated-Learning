@@ -50,7 +50,7 @@ def test_main_writes_outputs(small_cfg, capsys):
     main(cfg)
     out = capsys.readouterr().out
     assert "=== Metrics averaged over all 2 rounds ===" in out and "Accuracy vs DP budget" in out
-    for name in ["validation_metrics", "zkp_times", "encoding_decoding_times", "communication_computation_cost",
+    for name in ["validation_metrics", "zkp_times", "tree_transfer_times", "communication_computation_cost",
                  "convergence", "dp_budget_accuracy"]:
         assert not pd.read_csv(cfg["out_dir"] / f"{name}.csv").empty
     assert (cfg["out_dir"] / "global_forest.json").exists()

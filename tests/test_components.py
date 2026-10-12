@@ -12,10 +12,10 @@ from fedrf_diff.alignment import check_local_data
 from fedrf_diff.config import CONFIG
 from fedrf_diff.convergence import CombinedConvergence, prediction_change_sum
 from fedrf_diff.data import load_hospitals
-from fedrf_diff.decoder import InvalidUpdate, decode_update, load_forest
 from fedrf_diff.metrics import MCC, confusion_counts, metrics_from_counts
 from fedrf_diff.privacy import PrivacyAccountant, epsilon_schedule, laplace_scale, privatize_leaves
 from fedrf_diff.rf_kernel import forest_proba
+from fedrf_diff.server import InvalidUpdate, Limits, check_update, load_forest
 
 
 # ── Data and schema ─────────────────────────────────────────────────────────
@@ -84,9 +84,9 @@ def test_explicit_trees_reproduce_the_local_forest(federation):
     forest = c.train_round(1)
     trees = c.export(forest, 1)
     np.testing.assert_allclose(forest_proba(trees, c.X_val), forest.predict_proba(c.X_val), atol=1e-12)
-    decoded, rejected = server.decode(c.client_id, c.serialize(trees, 1, None), 1)
+    received, rejected = server.receive(c.client_id, c.serialize(trees, 1, None), 1)
     assert rejected == []
-    np.testing.assert_array_equal(forest_proba(decoded, c.X_val), forest_proba(trees, c.X_val))
+    np.testing.assert_array_equal(forest_proba(received, c.X_val), forest_proba(trees, c.X_val))
 
 
 def _valid_update(federation):
@@ -119,7 +119,7 @@ def test_malformed_tree_is_rejected_alone(federation, limits, corrupt, reason):
     update, client_id, schema = _valid_update(federation)
     n_trees = len(update["trees"])
     corrupt(update)
-    trees, rejected = decode_update(json.dumps(update).encode(), schema, limits, client_id, 1)
+    trees, rejected = check_update(json.dumps(update).encode(), schema, limits, client_id, 1)
     assert len(trees) == n_trees - 1
     assert len(rejected) == 1 and reason in rejected[0][1]
 
@@ -133,16 +133,15 @@ def test_invalid_leaf_and_shared_child_are_rejected(federation, limits):
     nodes2 = update["trees"][1]["nodes"]
     inner = [n for n in nodes2 if not n.get("leaf") and n["node_id"] != 0]
     inner[0]["left_child"] = nodes2[0]["left_child"] if nodes2[0]["left_child"] != inner[0]["node_id"] else 0
-    trees, rejected = decode_update(json.dumps(update).encode(), schema, limits, client_id, 1)
+    trees, rejected = check_update(json.dumps(update).encode(), schema, limits, client_id, 1)
     assert len(rejected) == 2
     assert "probability distribution" in rejected[0][1]
 
 
 def test_tree_too_deep_is_rejected(federation):
     update, client_id, schema = _valid_update(federation)
-    from fedrf_diff.decoder import Limits
     shallow = Limits(10 ** 8, 500, 20_000, max_depth=2)
-    trees, rejected = decode_update(json.dumps(update).encode(), schema, shallow, client_id, 1)
+    trees, rejected = check_update(json.dumps(update).encode(), schema, shallow, client_id, 1)
     assert rejected and all("depth" in r for _, r in rejected)
 
 
@@ -154,27 +153,26 @@ def test_malformed_update_is_rejected_whole(federation, limits):
     for payload, rnd, cid in [(raw, 2, client_id), (raw, 1, "client_2"), (b"{not json", 1, client_id),
                               (json.dumps(with_nan).encode(), 1, client_id)]:
         with pytest.raises(InvalidUpdate):
-            decode_update(payload, schema, limits, cid, rnd)
+            check_update(payload, schema, limits, cid, rnd)
     wrong = copy.deepcopy(update)
     wrong["schema_id"] = "0" * 16
     with pytest.raises(InvalidUpdate):
-        decode_update(json.dumps(wrong).encode(), schema, limits, client_id, 1)
-    from fedrf_diff.decoder import Limits
+        check_update(json.dumps(wrong).encode(), schema, limits, client_id, 1)
     with pytest.raises(InvalidUpdate):
-        decode_update(raw, schema, Limits(100, 500, 20_000, 64), client_id, 1)
+        check_update(raw, schema, Limits(100, 500, 20_000, 64), client_id, 1)
 
 
 def test_replayed_trees_and_per_client_cap(federation):
     schema, clients, server = federation
     c = clients[0]
     payload = c.serialize(c.export(c.train_round(1), 1), 1, None)
-    trees, _ = server.decode(c.client_id, payload, 1)
+    trees, _ = server.receive(c.client_id, payload, 1)
     added, removed = server.aggregate(trees)
     assert len(added) == len(trees) and removed == []
-    again, rejected = server.decode(c.client_id, payload, 1)
+    again, rejected = server.receive(c.client_id, payload, 1)
     assert again == [] and all(r == "replayed tree id" for _, r in rejected)
     server.max_trees_per_client = 3
-    newer, _ = server.decode(c.client_id, c.serialize(c.export(c.train_round(2), 2), 2, None), 2)
+    newer, _ = server.receive(c.client_id, c.serialize(c.export(c.train_round(2), 2), 2, None), 2)
     added, removed = server.aggregate(newer)
     assert len(server.forest) == 3 and set(removed) == {t.tree_id for t in trees}
     assert [t.tree_id for t in server.trees] == [t.tree_id for t in newer[-3:]]
@@ -183,7 +181,7 @@ def test_replayed_trees_and_per_client_cap(federation):
 def test_saved_forest_reloads(federation, tmp_path, limits):
     schema, clients, server = federation
     c = clients[2]
-    trees, _ = server.decode(c.client_id, c.serialize(c.export(c.train_round(1), 1), 1, None), 1)
+    trees, _ = server.receive(c.client_id, c.serialize(c.export(c.train_round(1), 1), 1, None), 1)
     server.aggregate(trees)
     server.save_forest(tmp_path / "forest.json", 1)
     loaded = load_forest(tmp_path / "forest.json", schema, limits)

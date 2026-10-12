@@ -9,7 +9,7 @@ feature vectors or split histograms leave a hospital.
     3  Local training        m new Random Forest trees per client per round       rf_kernel.py, client.py
     4  Explicit export       trees as nodes, Laplace DP on every leaf vector      rf_kernel.py, privacy.py
     5  Whole-tree transfer   serialized update + Modified Pedersen ZKP            client.py, zkp.py
-    6  Server validation     proof, schema, node references, splits, leaves      server.py, decoder.py
+    6  Server validation     proof, schema, node references, splits, leaves      server.py
     7  Global forest update  concatenate the valid trees (no averaging)          server.py
     8  Global evaluation     clients score G_t and return counts only           client.py, metrics.py
     9  Combined convergence  Delta M <= eps_M and Delta P <= eps_P for H rounds  convergence.py

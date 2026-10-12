@@ -7,8 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fedrf_diff.alignment import agree_schema  # noqa: E402
 from fedrf_diff.config import CONFIG  # noqa: E402
-from fedrf_diff.decoder import Limits  # noqa: E402
 from fedrf_diff.pipeline import build_federation  # noqa: E402
+from fedrf_diff.server import Limits  # noqa: E402
 
 
 @pytest.fixture

@@ -159,12 +159,12 @@ def fig_zkp(out_dir, zkp, names):
 
 # ── Computation cost ────────────────────────────────────────────────────────
 def fig_computation(out_dir, res, names):
-    cost, codec, zkp = res.cost, res.codec, res.zkp
+    cost, transfer, zkp = res.cost, res.transfer, res.zkp
     fig, axes = plt.subplots(2, 3, figsize=(10.4, 5.8))
     panels = [(cost, "Local Training Time (ms)", "Local training (client)"),
-              (codec, "Encoding Time (ms)", "Tree export + serialization (client)"),
-              (codec, "Decoding Time (ms)", "Decoding + tree validation (server)"),
-              (cost, "Validation Time (ms)", "Scoring the global forest (client)")]
+              (transfer, "Serialization Time (ms)", "Tree export + serialization (client)"),
+              (transfer, "Tree Validation Time (ms)", "Tree validation (server)"),
+              (cost, "Scoring Time (ms)", "Scoring the global forest (client)")]
     for ax, (df, col, title), letter in zip(axes.flat, panels, "abcd"):
         _per_client_lines(ax, df, col, names)
         ax.set_ylabel("Milliseconds")
@@ -183,9 +183,9 @@ def fig_computation(out_dir, res, names):
     ax = axes.flat[5]
     parts = {"Training": cost.groupby("Client")["Local Training Time (ms)"].mean(),
              "Laplace DP": cost.groupby("Client")["DP Time (ms)"].mean(),
-             "Encoding": codec.groupby("Client")["Encoding Time (ms)"].mean(),
+             "Serialization": transfer.groupby("Client")["Serialization Time (ms)"].mean(),
              "ZKP proof": zkp.groupby("Client")["ZKP Proof Generation Time (ms)"].mean(),
-             "Scoring": cost.groupby("Client")["Validation Time (ms)"].mean()}
+             "Scoring": cost.groupby("Client")["Scoring Time (ms)"].mean()}
     y = np.arange(len(names))
     left = np.zeros(len(names))
     for (label, v), color in zip(parts.items(), ["#184f95", "#2a78d6", "#86b6ef", "#c3c2b7", "#e1e0d9"]):

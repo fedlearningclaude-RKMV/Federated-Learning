@@ -7,7 +7,7 @@ from .metrics import MCC, METRICS
 
 SERVER = "Global Server"
 ZKP_TIMES = ["ZKP Authentication Time (ms)", "ZKP Proof Generation Time (ms)", "ZKP Proof Verification Time (ms)"]
-CODEC_TIMES = ["Encoding Time (ms)", "Decoding Time (ms)"]
+TRANSFER_TIMES = ["Serialization Time (ms)", "Tree Validation Time (ms)"]
 
 
 def show(df):
@@ -45,7 +45,7 @@ def header(cfg, clients, schema, dp_text, zkp_group):
     print(f"{SERVER} = the global model scored on all clients' validation patients together.")
 
 
-def round_report(rnd, zkp_rows, codec_rows, round_metrics, server_line):
+def round_report(rnd, zkp_rows, transfer_rows, round_metrics, server_line):
     print(f"\n{'=' * 30} Round {rnd} {'=' * 30}")
     if zkp_rows:
         rz = pd.DataFrame(zkp_rows).drop(columns="Round")
@@ -57,8 +57,8 @@ def round_report(rnd, zkp_rows, codec_rows, round_metrics, server_line):
                       else "Failed (proof invalid, update rejected)")
             print(f"  {r['Client']:<24}: Authentication {status}")
         print()
-    print("Encoding and decoding times (per client):")
-    show(pd.DataFrame(codec_rows)[["Client", *CODEC_TIMES]])
+    print("Whole-tree transfer times (per client):")
+    show(pd.DataFrame(transfer_rows)[["Client", *TRANSFER_TIMES]])
     print(f"\nValidation metrics of the global model after round {rnd}:")
     show(pd.DataFrame([{"Client": p, **m} for p, m in round_metrics.items()]))
     print(server_line)
@@ -87,7 +87,7 @@ def run_summary(res, names):
           f"{len(res.zkp) - ok} failed (updates rejected)")
 
     print("\n=== Server tree validation summary ===")
-    g = res.codec.groupby("Client", sort=False)
+    g = res.transfer.groupby("Client", sort=False)
     trees = pd.DataFrame({"Client": names, "Trees Sent": [int(g["Trees Sent"].sum()[c]) for c in names],
                           "Trees Accepted": [int(g["Trees Accepted"].sum()[c]) for c in names]})
     trees["Trees Rejected"] = trees["Trees Sent"] - trees["Trees Accepted"]
@@ -96,10 +96,10 @@ def run_summary(res, names):
           f"{trees['Trees Rejected'].sum()} rejected (schema, node references, split fields, leaf outputs, "
           f"size and depth limits)")
 
-    print(f"\n=== Encoding and decoding time analysis over {n} rounds (min, max and mean per client) ===")
-    for col in CODEC_TIMES:
+    print(f"\n=== Whole-tree transfer time analysis over {n} rounds (min, max and mean per client) ===")
+    for col in TRANSFER_TIMES:
         print(f"{col}:")
-        stats_table(res.codec, col, "ms", names)
+        stats_table(res.transfer, col, "ms", names)
 
 
 def dp_sweep_report(avg, last, rounds):

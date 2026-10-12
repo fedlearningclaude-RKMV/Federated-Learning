@@ -12,11 +12,10 @@ from .client import REPORT_BYTES, HospitalClient
 from .config import CONFIG
 from .convergence import CombinedConvergence
 from .data import load_hospitals, mark_missing, save_client_csvs, split_hospitals
-from .decoder import Limits
 from .metrics import metrics_from_counts
 from .privacy import PrivacyAccountant, describe, epsilon_schedule, laplace_scale
 from .report import SERVER, fmt, short_metric
-from .server import FederatedServer
+from .server import FederatedServer, Limits
 
 
 @dataclass
@@ -25,7 +24,7 @@ class RunResult:
     converged: bool
     metrics: pd.DataFrame
     zkp: pd.DataFrame
-    codec: pd.DataFrame
+    transfer: pd.DataFrame
     cost: pd.DataFrame
     convergence: pd.DataFrame
     schedule: list
@@ -74,7 +73,7 @@ def run_federation(cfg, dp_spec, rounds, with_zkp=True, verbose=True, stop_on_co
     conv = CombinedConvergence(cfg["eps_metric"], cfg["eps_pred"], cfg["patience"])
     accountant = PrivacyAccountant(cfg["trees_per_client"])
     metric_name = cfg["convergence_metric"]
-    zkp_rows, codec_rows, cost_rows, metric_rows, conv_rows = [], [], [], [], []
+    zkp_rows, transfer_rows, cost_rows, metric_rows, conv_rows = [], [], [], [], []
     converged, rnd = False, 0
 
     for rnd in range(1, rounds + 1):
@@ -96,13 +95,13 @@ def run_federation(cfg, dp_spec, rounds, with_zkp=True, verbose=True, stop_on_co
             u["dp"] = time.perf_counter() - t0
             t0 = time.perf_counter()
             u["payload"] = c.serialize(trees, rnd, epsilon)
-            u["enc"] = t_export + time.perf_counter() - t0
+            u["ser"] = t_export + time.perf_counter() - t0
             u["n_trees"], u["vectors"] = len(trees), sum(t.n_leaves for t in trees)
             t0 = time.perf_counter()
             u["proof"] = c.prove(u["payload"], rnd) if with_zkp else None
             u["gen"] = time.perf_counter() - t0
 
-        # Step 6 · authentication, decoding and validation of every tree
+        # Step 6 · authentication and validation of every received tree
         accepted = []
         for c in clients:
             u = updates[c.cid]
@@ -110,9 +109,9 @@ def run_federation(cfg, dp_spec, rounds, with_zkp=True, verbose=True, stop_on_co
             u["valid"] = server.verify(c.client_id, u["payload"], u["proof"], rnd) if with_zkp else True
             u["ver"] = time.perf_counter() - t0
             t0 = time.perf_counter()
-            trees, rejected = (server.decode(c.client_id, u["payload"], rnd) if u["valid"]
+            trees, rejected = (server.receive(c.client_id, u["payload"], rnd) if u["valid"]
                                else ([], [("<update>", "authentication failed")]))
-            u["dec"] = time.perf_counter() - t0
+            u["check"] = time.perf_counter() - t0
             u["accepted"], u["rejected"] = len(trees), rejected
             accepted += trees
 
@@ -152,21 +151,21 @@ def run_federation(cfg, dp_spec, rounds, with_zkp=True, verbose=True, stop_on_co
                                  "Vectors": u["vectors"], "ZKP Authentication Time (ms)": ms(u["gen"] + u["ver"]),
                                  "ZKP Proof Generation Time (ms)": ms(u["gen"]),
                                  "ZKP Proof Verification Time (ms)": ms(u["ver"])})
-            codec_rows.append({"Round": rnd, "Client": c.name, "Encoding Time (ms)": ms(u["enc"]),
-                               "Decoding Time (ms)": ms(u["dec"]), "Trees Sent": u["n_trees"],
-                               "Trees Accepted": u["accepted"],
-                               "Rejections": "; ".join(f"{i}: {r}" for i, r in u["rejected"])})
+            transfer_rows.append({"Round": rnd, "Client": c.name, "Serialization Time (ms)": ms(u["ser"]),
+                                  "Tree Validation Time (ms)": ms(u["check"]), "Trees Sent": u["n_trees"],
+                                  "Trees Accepted": u["accepted"],
+                                  "Rejections": "; ".join(f"{i}: {r}" for i, r in u["rejected"])})
             proof_bytes = u["proof"].size_bytes if with_zkp else 0
             cost_rows.append({"Round": rnd, "Client": c.name,
                               "Uplink (KB)": (len(u["payload"]) + proof_bytes + REPORT_BYTES) / 1024,
                               "Downlink (KB)": sum(b for cid, b in added_bytes.items() if cid != c.client_id) / 1024,
                               "Local Training Time (ms)": ms(u["train"]), "DP Time (ms)": ms(u["dp"]),
-                              "Validation Time (ms)": ms(u["val"]), "Aggregation Time (ms)": np.nan,
+                              "Scoring Time (ms)": ms(u["val"]), "Aggregation Time (ms)": np.nan,
                               "Global Forest (KB)": np.nan})
         round_costs = pd.DataFrame(cost_rows[-len(clients):])
         cost_rows.append({"Round": rnd, "Client": SERVER, "Uplink (KB)": round_costs["Uplink (KB)"].sum(),
                           "Downlink (KB)": round_costs["Downlink (KB)"].sum(), "Local Training Time (ms)": np.nan,
-                          "DP Time (ms)": np.nan, "Validation Time (ms)": np.nan,
+                          "DP Time (ms)": np.nan, "Scoring Time (ms)": np.nan,
                           "Aggregation Time (ms)": ms(t_agg), "Global Forest (KB)": forest_kb})
         for party, m in round_metrics.items():
             metric_rows.append({"Round": rnd, "Client": party, **m})
@@ -191,14 +190,14 @@ def run_federation(cfg, dp_spec, rounds, with_zkp=True, verbose=True, stop_on_co
                     f"(eps_M {cfg['eps_metric']:g}) | Delta P = {fmt(check.delta_pred, '.5f')} "
                     f"(eps_P {cfg['eps_pred']:g}) | patience {check.stable_rounds}/{cfg['patience']} | "
                     f"round time {round_time:.1f} s | {dp}")
-            report.round_report(rnd, zkp_rows[-len(clients):] if with_zkp else [], codec_rows[-len(clients):],
+            report.round_report(rnd, zkp_rows[-len(clients):] if with_zkp else [], transfer_rows[-len(clients):],
                                 round_metrics, line)
 
         if check.converged and stop_on_convergence:
             converged = True
             break
 
-    return RunResult(rnd, converged, pd.DataFrame(metric_rows), pd.DataFrame(zkp_rows), pd.DataFrame(codec_rows),
+    return RunResult(rnd, converged, pd.DataFrame(metric_rows), pd.DataFrame(zkp_rows), pd.DataFrame(transfer_rows),
                      pd.DataFrame(cost_rows), pd.DataFrame(conv_rows), schedule[:rnd], accountant.total,
                      server, clients)
 
@@ -246,7 +245,7 @@ def main(cfg=CONFIG):
 
     res.metrics.to_csv(out_dir / "validation_metrics.csv", index=False)
     res.zkp.to_csv(out_dir / "zkp_times.csv", index=False)
-    res.codec.to_csv(out_dir / "encoding_decoding_times.csv", index=False)
+    res.transfer.to_csv(out_dir / "tree_transfer_times.csv", index=False)
     res.cost.to_csv(out_dir / "communication_computation_cost.csv", index=False)
     res.convergence.to_csv(out_dir / "convergence.csv", index=False)
 

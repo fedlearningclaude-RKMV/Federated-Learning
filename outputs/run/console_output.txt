@@ -7,10 +7,10 @@ Global Server = the global model scored on all clients' validation patients toge
 ============================== Round 1 ==============================
 ZKP client authentication (per client):
                  Client Proof  Vectors  ZKP Authentication Time (ms)  ZKP Proof Generation Time (ms)  ZKP Proof Verification Time (ms)
-      Client 1(Hungary) Valid      434                       18.4501                          6.9850                           11.4651
-  Client 2(Switzerland) Valid      174                       18.0363                          7.0162                           11.0201
-Client 3(VA Long Beach) Valid      473                       17.5408                          7.1892                           10.3516
-    Client 4(Cleveland) Valid      898                       18.0062                          7.3279                           10.6783
+      Client 1(Hungary) Valid      434                       21.4480                         11.0529                           10.3951
+  Client 2(Switzerland) Valid      174                       21.1265                         10.8751                           10.2514
+Client 3(VA Long Beach) Valid      473                       17.3785                          6.9455                           10.4330
+    Client 4(Cleveland) Valid      898                       17.5638                          7.1332                           10.4306
 
 ZKP authentication status:
   Client 1(Hungary)       : Authentication Successful (proof valid, update accepted)
@@ -18,12 +18,12 @@ ZKP authentication status:
   Client 3(VA Long Beach) : Authentication Successful (proof valid, update accepted)
   Client 4(Cleveland)     : Authentication Successful (proof valid, update accepted)
 
-Encoding and decoding times (per client):
-                 Client  Encoding Time (ms)  Decoding Time (ms)
-      Client 1(Hungary)              3.6102              7.0060
-  Client 2(Switzerland)              2.7706              3.1260
-Client 3(VA Long Beach)              3.6767              5.7878
-    Client 4(Cleveland)              5.8758             10.7102
+Whole-tree transfer times (per client):
+                 Client  Serialization Time (ms)  Tree Validation Time (ms)
+      Client 1(Hungary)                   5.9527                     5.7158
+  Client 2(Switzerland)                   3.6886                     2.6388
+Client 3(VA Long Beach)                   3.6993                     5.5974
+    Client 4(Cleveland)                   6.1879                    10.0131
 
 Validation metrics of the global model after round 1:
                  Client  Accuracy  Precision  Recall  Specificity  F1 Score  Matthews Correlation Coefficient (MCC)  Cohen's Kappa
@@ -32,15 +32,15 @@ Validation metrics of the global model after round 1:
 Client 3(VA Long Beach)    0.8750     0.9310  0.9000       0.8000    0.9153                                  0.6788         0.6774
     Client 4(Cleveland)    0.6885     0.6452  0.7143       0.6667    0.6780                                  0.3797         0.3779
           Global Server    0.8108     0.8384  0.8137       0.8072    0.8259                                  0.6192         0.6189
-Server: global forest 100 trees (+100 valid, 0 rejected) | MCC = 0.6192 | Delta M = n/a (eps_M 0.001) | Delta P = n/a (eps_P 0.005) | patience 0/3 | round time 0.3 s | DP budget: epsilon = 2.290 per leaf vector this round (pure DP); per patient 57.24 this round, 57.24 in total
+Server: global forest 100 trees (+100 valid, 0 rejected) | MCC = 0.6192 | Delta M = n/a (eps_M 0.001) | Delta P = n/a (eps_P 0.005) | patience 0/3 | round time 0.4 s | DP budget: epsilon = 2.290 per leaf vector this round (pure DP); per patient 57.24 this round, 57.24 in total
 
 ============================== Round 2 ==============================
 ZKP client authentication (per client):
                  Client Proof  Vectors  ZKP Authentication Time (ms)  ZKP Proof Generation Time (ms)  ZKP Proof Verification Time (ms)
-      Client 1(Hungary) Valid      439                       27.7514                         12.9274                           14.8239
-  Client 2(Switzerland) Valid      158                       21.8219                          7.6822                           14.1397
-Client 3(VA Long Beach) Valid      482                       26.1474                         11.2103                           14.9371
-    Client 4(Cleveland) Valid      870                       23.5834                          9.8285                           13.7549
+      Client 1(Hungary) Valid      439                       17.5928                          6.9348                           10.6579
+  Client 2(Switzerland) Valid      158                       22.9080                         12.3837                           10.5243
+Client 3(VA Long Beach) Valid      482                       23.4680                         12.4122                           11.0558
+    Client 4(Cleveland) Valid      870                       18.0036                          7.3374                           10.6662
 
 ZKP authentication status:
   Client 1(Hungary)       : Authentication Successful (proof valid, update accepted)
@@ -48,12 +48,12 @@ ZKP authentication status:
   Client 3(VA Long Beach) : Authentication Successful (proof valid, update accepted)
   Client 4(Cleveland)     : Authentication Successful (proof valid, update accepted)
 
-Encoding and decoding times (per client):
-                 Client  Encoding Time (ms)  Decoding Time (ms)
-      Client 1(Hungary)              6.8737              9.7212
-  Client 2(Switzerland)              2.4987              5.9824
-Client 3(VA Long Beach)              8.0075             13.3362
-    Client 4(Cleveland)             11.1380             20.0747
+Whole-tree transfer times (per client):
+                 Client  Serialization Time (ms)  Tree Validation Time (ms)
+      Client 1(Hungary)                   3.4332                     7.1696
+  Client 2(Switzerland)                   3.6307                     2.9674
+Client 3(VA Long Beach)                   6.8646                     5.8362
+    Client 4(Cleveland)                   6.3985                     9.8588
 
 Validation metrics of the global model after round 2:
                  Client  Accuracy  Precision  Recall  Specificity  F1 Score  Matthews Correlation Coefficient (MCC)  Cohen's Kappa
@@ -62,15 +62,15 @@ Validation metrics of the global model after round 2:
 Client 3(VA Long Beach)    0.9250     0.9355  0.9667       0.8000    0.9508                                  0.7950         0.7931
     Client 4(Cleveland)    0.6885     0.6452  0.7143       0.6667    0.6780                                  0.3797         0.3779
           Global Server    0.8324     0.8447  0.8529       0.8072    0.8488                                  0.6610         0.6609
-Server: global forest 200 trees (+100 valid, 0 rejected) | MCC = 0.6610 | Delta M = 0.0417 (eps_M 0.001) | Delta P = 0.02268 (eps_P 0.005) | patience 0/3 | round time 0.5 s | DP budget: epsilon = 2.952 per leaf vector this round (pure DP); per patient 73.80 this round, 131.04 in total
+Server: global forest 200 trees (+100 valid, 0 rejected) | MCC = 0.6610 | Delta M = 0.0417 (eps_M 0.001) | Delta P = 0.02268 (eps_P 0.005) | patience 0/3 | round time 0.4 s | DP budget: epsilon = 2.952 per leaf vector this round (pure DP); per patient 73.80 this round, 131.04 in total
 
 ============================== Round 3 ==============================
 ZKP client authentication (per client):
                  Client Proof  Vectors  ZKP Authentication Time (ms)  ZKP Proof Generation Time (ms)  ZKP Proof Verification Time (ms)
-      Client 1(Hungary) Valid      435                       20.6047                         10.0426                           10.5621
-  Client 2(Switzerland) Valid      172                       20.8460                          7.2896                           13.5563
-Client 3(VA Long Beach) Valid      487                       17.7980                          7.0169                           10.7811
-    Client 4(Cleveland) Valid      872                       22.2612                          7.6135                           14.6477
+      Client 1(Hungary) Valid      435                       20.1371                          9.4963                           10.6409
+  Client 2(Switzerland) Valid      172                       22.5405                          7.2918                           15.2488
+Client 3(VA Long Beach) Valid      487                       26.2430                         10.4502                           15.7928
+    Client 4(Cleveland) Valid      872                       23.3542                          7.5846                           15.7696
 
 ZKP authentication status:
   Client 1(Hungary)       : Authentication Successful (proof valid, update accepted)
@@ -78,12 +78,12 @@ ZKP authentication status:
   Client 3(VA Long Beach) : Authentication Successful (proof valid, update accepted)
   Client 4(Cleveland)     : Authentication Successful (proof valid, update accepted)
 
-Encoding and decoding times (per client):
-                 Client  Encoding Time (ms)  Decoding Time (ms)
-      Client 1(Hungary)              5.6947              6.1291
-  Client 2(Switzerland)              2.3189              3.3644
-Client 3(VA Long Beach)              3.7681              6.0931
-    Client 4(Cleveland)              5.8801             18.7561
+Whole-tree transfer times (per client):
+                 Client  Serialization Time (ms)  Tree Validation Time (ms)
+      Client 1(Hungary)                   5.8746                     5.2226
+  Client 2(Switzerland)                   2.1415                     5.0809
+Client 3(VA Long Beach)                   5.9406                    12.3220
+    Client 4(Cleveland)                   5.9755                    16.7043
 
 Validation metrics of the global model after round 3:
                  Client  Accuracy  Precision  Recall  Specificity  F1 Score  Matthews Correlation Coefficient (MCC)  Cohen's Kappa
@@ -92,15 +92,15 @@ Validation metrics of the global model after round 3:
 Client 3(VA Long Beach)    0.9000     0.9062  0.9667       0.7000    0.9355                                  0.7217         0.7143
     Client 4(Cleveland)    0.6885     0.6452  0.7143       0.6667    0.6780                                  0.3797         0.3779
           Global Server    0.8378     0.8462  0.8627       0.8072    0.8544                                  0.6716         0.6715
-Server: global forest 300 trees (+100 valid, 0 rejected) | MCC = 0.6716 | Delta M = 0.0107 (eps_M 0.001) | Delta P = 0.01322 (eps_P 0.005) | patience 0/3 | round time 0.4 s | DP budget: epsilon = 2.093 per leaf vector this round (pure DP); per patient 52.33 this round, 183.36 in total
+Server: global forest 300 trees (+100 valid, 0 rejected) | MCC = 0.6716 | Delta M = 0.0107 (eps_M 0.001) | Delta P = 0.01322 (eps_P 0.005) | patience 0/3 | round time 0.5 s | DP budget: epsilon = 2.093 per leaf vector this round (pure DP); per patient 52.33 this round, 183.36 in total
 
 ============================== Round 4 ==============================
 ZKP client authentication (per client):
                  Client Proof  Vectors  ZKP Authentication Time (ms)  ZKP Proof Generation Time (ms)  ZKP Proof Verification Time (ms)
-      Client 1(Hungary) Valid      419                       33.5072                          9.4923                           24.0150
-  Client 2(Switzerland) Valid      169                       33.5212                          9.7506                           23.7706
-Client 3(VA Long Beach) Valid      492                       30.9188                          7.5534                           23.3654
-    Client 4(Cleveland) Valid      864                       33.1837                         10.2162                           22.9675
+      Client 1(Hungary) Valid      419                       18.0855                          7.5268                           10.5587
+  Client 2(Switzerland) Valid      169                       18.5455                          7.4797                           11.0658
+Client 3(VA Long Beach) Valid      492                       18.3422                          7.6418                           10.7004
+    Client 4(Cleveland) Valid      864                       18.7949                          7.3338                           11.4611
 
 ZKP authentication status:
   Client 1(Hungary)       : Authentication Successful (proof valid, update accepted)
@@ -108,12 +108,12 @@ ZKP authentication status:
   Client 3(VA Long Beach) : Authentication Successful (proof valid, update accepted)
   Client 4(Cleveland)     : Authentication Successful (proof valid, update accepted)
 
-Encoding and decoding times (per client):
-                 Client  Encoding Time (ms)  Decoding Time (ms)
-      Client 1(Hungary)              5.5268             12.5764
-  Client 2(Switzerland)              3.6698              5.6033
-Client 3(VA Long Beach)              4.3295             13.2383
-    Client 4(Cleveland)              8.4867             22.2070
+Whole-tree transfer times (per client):
+                 Client  Serialization Time (ms)  Tree Validation Time (ms)
+      Client 1(Hungary)                   3.5592                     5.3770
+  Client 2(Switzerland)                   2.4646                     3.0401
+Client 3(VA Long Beach)                   4.8792                     6.7459
+    Client 4(Cleveland)                   6.3533                    10.9232
 
 Validation metrics of the global model after round 4:
                  Client  Accuracy  Precision  Recall  Specificity  F1 Score  Matthews Correlation Coefficient (MCC)  Cohen's Kappa
@@ -122,15 +122,15 @@ Validation metrics of the global model after round 4:
 Client 3(VA Long Beach)    0.9000     0.9062  0.9667       0.7000    0.9355                                  0.7217         0.7143
     Client 4(Cleveland)    0.7213     0.6774  0.7500       0.6970    0.7119                                  0.4455         0.4434
           Global Server    0.8486     0.8558  0.8725       0.8193    0.8641                                  0.6935         0.6934
-Server: global forest 400 trees (+100 valid, 0 rejected) | MCC = 0.6935 | Delta M = 0.0219 (eps_M 0.001) | Delta P = 0.00691 (eps_P 0.005) | patience 0/3 | round time 0.6 s | DP budget: epsilon = 2.321 per leaf vector this round (pure DP); per patient 58.03 this round, 241.39 in total
+Server: global forest 400 trees (+100 valid, 0 rejected) | MCC = 0.6935 | Delta M = 0.0219 (eps_M 0.001) | Delta P = 0.00691 (eps_P 0.005) | patience 0/3 | round time 0.4 s | DP budget: epsilon = 2.321 per leaf vector this round (pure DP); per patient 58.03 this round, 241.39 in total
 
 ============================== Round 5 ==============================
 ZKP client authentication (per client):
                  Client Proof  Vectors  ZKP Authentication Time (ms)  ZKP Proof Generation Time (ms)  ZKP Proof Verification Time (ms)
-      Client 1(Hungary) Valid      426                       17.8314                          7.5050                           10.3265
-  Client 2(Switzerland) Valid      171                       23.9645                         12.5221                           11.4424
-Client 3(VA Long Beach) Valid      469                       22.1037                         10.7428                           11.3609
-    Client 4(Cleveland) Valid      891                       20.7429                          7.4334                           13.3094
+      Client 1(Hungary) Valid      426                       17.8984                          7.1191                           10.7793
+  Client 2(Switzerland) Valid      171                       17.7840                          7.0851                           10.6988
+Client 3(VA Long Beach) Valid      469                       18.3274                          7.7563                           10.5711
+    Client 4(Cleveland) Valid      891                       18.0432                          7.2161                           10.8271
 
 ZKP authentication status:
   Client 1(Hungary)       : Authentication Successful (proof valid, update accepted)
@@ -138,12 +138,12 @@ ZKP authentication status:
   Client 3(VA Long Beach) : Authentication Successful (proof valid, update accepted)
   Client 4(Cleveland)     : Authentication Successful (proof valid, update accepted)
 
-Encoding and decoding times (per client):
-                 Client  Encoding Time (ms)  Decoding Time (ms)
-      Client 1(Hungary)              5.6791              5.4472
-  Client 2(Switzerland)              4.4524              3.6893
-Client 3(VA Long Beach)              6.7070              7.9662
-    Client 4(Cleveland)              6.1834             15.0759
+Whole-tree transfer times (per client):
+                 Client  Serialization Time (ms)  Tree Validation Time (ms)
+      Client 1(Hungary)                   3.2510                     5.4124
+  Client 2(Switzerland)                   2.0580                     2.6952
+Client 3(VA Long Beach)                   4.2578                     5.4807
+    Client 4(Cleveland)                   6.1831                    10.6516
 
 Validation metrics of the global model after round 5:
                  Client  Accuracy  Precision  Recall  Specificity  F1 Score  Matthews Correlation Coefficient (MCC)  Cohen's Kappa
@@ -152,15 +152,15 @@ Validation metrics of the global model after round 5:
 Client 3(VA Long Beach)    0.9000     0.9062  0.9667       0.7000    0.9355                                  0.7217         0.7143
     Client 4(Cleveland)    0.7213     0.6774  0.7500       0.6970    0.7119                                  0.4455         0.4434
           Global Server    0.8486     0.8558  0.8725       0.8193    0.8641                                  0.6935         0.6934
-Server: global forest 500 trees (+100 valid, 0 rejected) | MCC = 0.6935 | Delta M = 0.0000 (eps_M 0.001) | Delta P = 0.00606 (eps_P 0.005) | patience 0/3 | round time 0.5 s | DP budget: epsilon = 2.366 per leaf vector this round (pure DP); per patient 59.14 this round, 300.53 in total
+Server: global forest 500 trees (+100 valid, 0 rejected) | MCC = 0.6935 | Delta M = 0.0000 (eps_M 0.001) | Delta P = 0.00606 (eps_P 0.005) | patience 0/3 | round time 0.4 s | DP budget: epsilon = 2.366 per leaf vector this round (pure DP); per patient 59.14 this round, 300.53 in total
 
 ============================== Round 6 ==============================
 ZKP client authentication (per client):
                  Client Proof  Vectors  ZKP Authentication Time (ms)  ZKP Proof Generation Time (ms)  ZKP Proof Verification Time (ms)
-      Client 1(Hungary) Valid      425                       20.0778                          7.6909                           12.3869
-  Client 2(Switzerland) Valid      171                       20.8749                          9.9420                           10.9328
-Client 3(VA Long Beach) Valid      476                       20.1419                          7.5665                           12.5754
-    Client 4(Cleveland) Valid      858                       20.2637                          8.7152                           11.5485
+      Client 1(Hungary) Valid      425                       17.6309                          7.1238                           10.5070
+  Client 2(Switzerland) Valid      171                       23.2180                          6.9274                           16.2907
+Client 3(VA Long Beach) Valid      476                       18.7025                          7.2993                           11.4032
+    Client 4(Cleveland) Valid      858                       21.3936                          7.2447                           14.1488
 
 ZKP authentication status:
   Client 1(Hungary)       : Authentication Successful (proof valid, update accepted)
@@ -168,12 +168,12 @@ ZKP authentication status:
   Client 3(VA Long Beach) : Authentication Successful (proof valid, update accepted)
   Client 4(Cleveland)     : Authentication Successful (proof valid, update accepted)
 
-Encoding and decoding times (per client):
-                 Client  Encoding Time (ms)  Decoding Time (ms)
-      Client 1(Hungary)              4.0773              8.4463
-  Client 2(Switzerland)              4.1667              3.1380
-Client 3(VA Long Beach)              3.8721              8.7887
-    Client 4(Cleveland)              8.9262            125.6185
+Whole-tree transfer times (per client):
+                 Client  Serialization Time (ms)  Tree Validation Time (ms)
+      Client 1(Hungary)                   5.8969                     6.2424
+  Client 2(Switzerland)                   2.3201                     3.2532
+Client 3(VA Long Beach)                   3.9019                     6.2081
+    Client 4(Cleveland)                   7.9533                   106.2359
 
 Validation metrics of the global model after round 6:
                  Client  Accuracy  Precision  Recall  Specificity  F1 Score  Matthews Correlation Coefficient (MCC)  Cohen's Kappa
@@ -182,15 +182,15 @@ Validation metrics of the global model after round 6:
 Client 3(VA Long Beach)    0.9000     0.9062  0.9667       0.7000    0.9355                                  0.7217         0.7143
     Client 4(Cleveland)    0.7213     0.6774  0.7500       0.6970    0.7119                                  0.4455         0.4434
           Global Server    0.8486     0.8558  0.8725       0.8193    0.8641                                  0.6935         0.6934
-Server: global forest 600 trees (+100 valid, 0 rejected) | MCC = 0.6935 | Delta M = 0.0000 (eps_M 0.001) | Delta P = 0.00655 (eps_P 0.005) | patience 0/3 | round time 0.6 s | DP budget: epsilon = 2.911 per leaf vector this round (pure DP); per patient 72.77 this round, 373.30 in total
+Server: global forest 600 trees (+100 valid, 0 rejected) | MCC = 0.6935 | Delta M = 0.0000 (eps_M 0.001) | Delta P = 0.00655 (eps_P 0.005) | patience 0/3 | round time 0.5 s | DP budget: epsilon = 2.911 per leaf vector this round (pure DP); per patient 72.77 this round, 373.30 in total
 
 ============================== Round 7 ==============================
 ZKP client authentication (per client):
                  Client Proof  Vectors  ZKP Authentication Time (ms)  ZKP Proof Generation Time (ms)  ZKP Proof Verification Time (ms)
-      Client 1(Hungary) Valid      453                       27.4329                         10.7876                           16.6453
-  Client 2(Switzerland) Valid      178                       23.6139                          7.0543                           16.5596
-Client 3(VA Long Beach) Valid      493                       24.4967                          7.5648                           16.9319
-    Client 4(Cleveland) Valid      841                       28.0050                         11.4837                           16.5213
+      Client 1(Hungary) Valid      453                       17.6564                          7.0884                           10.5680
+  Client 2(Switzerland) Valid      178                       18.2076                          7.4268                           10.7808
+Client 3(VA Long Beach) Valid      493                       19.3729                          7.5408                           11.8322
+    Client 4(Cleveland) Valid      841                       18.4627                          7.4183                           11.0445
 
 ZKP authentication status:
   Client 1(Hungary)       : Authentication Successful (proof valid, update accepted)
@@ -198,12 +198,12 @@ ZKP authentication status:
   Client 3(VA Long Beach) : Authentication Successful (proof valid, update accepted)
   Client 4(Cleveland)     : Authentication Successful (proof valid, update accepted)
 
-Encoding and decoding times (per client):
-                 Client  Encoding Time (ms)  Decoding Time (ms)
-      Client 1(Hungary)              6.4110             11.1915
-  Client 2(Switzerland)              2.1496              5.3434
-Client 3(VA Long Beach)              3.8173             11.8249
-    Client 4(Cleveland)             10.9582             19.0333
+Whole-tree transfer times (per client):
+                 Client  Serialization Time (ms)  Tree Validation Time (ms)
+      Client 1(Hungary)                   3.7628                     5.7343
+  Client 2(Switzerland)                   2.4881                     3.2294
+Client 3(VA Long Beach)                   4.3115                     6.0064
+    Client 4(Cleveland)                   5.8307                     9.4180
 
 Validation metrics of the global model after round 7:
                  Client  Accuracy  Precision  Recall  Specificity  F1 Score  Matthews Correlation Coefficient (MCC)  Cohen's Kappa
@@ -212,15 +212,15 @@ Validation metrics of the global model after round 7:
 Client 3(VA Long Beach)    0.9250     0.9355  0.9667       0.8000    0.9508                                  0.7950         0.7931
     Client 4(Cleveland)    0.7213     0.6774  0.7500       0.6970    0.7119                                  0.4455         0.4434
           Global Server    0.8486     0.8558  0.8725       0.8193    0.8641                                  0.6935         0.6934
-Server: global forest 700 trees (+100 valid, 0 rejected) | MCC = 0.6935 | Delta M = 0.0000 (eps_M 0.001) | Delta P = 0.00620 (eps_P 0.005) | patience 0/3 | round time 0.5 s | DP budget: epsilon = 2.110 per leaf vector this round (pure DP); per patient 52.75 this round, 426.05 in total
+Server: global forest 700 trees (+100 valid, 0 rejected) | MCC = 0.6935 | Delta M = 0.0000 (eps_M 0.001) | Delta P = 0.00620 (eps_P 0.005) | patience 0/3 | round time 0.4 s | DP budget: epsilon = 2.110 per leaf vector this round (pure DP); per patient 52.75 this round, 426.05 in total
 
 ============================== Round 8 ==============================
 ZKP client authentication (per client):
                  Client Proof  Vectors  ZKP Authentication Time (ms)  ZKP Proof Generation Time (ms)  ZKP Proof Verification Time (ms)
-      Client 1(Hungary) Valid      472                       19.0354                          7.5272                           11.5082
-  Client 2(Switzerland) Valid      177                       17.8573                          7.2159                           10.6415
-Client 3(VA Long Beach) Valid      509                       22.1815                         10.5987                           11.5828
-    Client 4(Cleveland) Valid      858                       20.4084                          9.8031                           10.6052
+      Client 1(Hungary) Valid      472                       18.1004                          7.4291                           10.6713
+  Client 2(Switzerland) Valid      177                       18.0267                          7.3881                           10.6386
+Client 3(VA Long Beach) Valid      509                       18.4068                          7.5015                           10.9053
+    Client 4(Cleveland) Valid      858                       18.2917                          7.5547                           10.7370
 
 ZKP authentication status:
   Client 1(Hungary)       : Authentication Successful (proof valid, update accepted)
@@ -228,12 +228,12 @@ ZKP authentication status:
   Client 3(VA Long Beach) : Authentication Successful (proof valid, update accepted)
   Client 4(Cleveland)     : Authentication Successful (proof valid, update accepted)
 
-Encoding and decoding times (per client):
-                 Client  Encoding Time (ms)  Decoding Time (ms)
-      Client 1(Hungary)              3.5381              6.4292
-  Client 2(Switzerland)              2.5770              2.8969
-Client 3(VA Long Beach)              5.0498              6.1782
-    Client 4(Cleveland)              6.4390              9.7550
+Whole-tree transfer times (per client):
+                 Client  Serialization Time (ms)  Tree Validation Time (ms)
+      Client 1(Hungary)                   3.4425                     6.3236
+  Client 2(Switzerland)                   2.5508                     3.1458
+Client 3(VA Long Beach)                   3.9885                     6.5589
+    Client 4(Cleveland)                   6.0044                    19.9199
 
 Validation metrics of the global model after round 8:
                  Client  Accuracy  Precision  Recall  Specificity  F1 Score  Matthews Correlation Coefficient (MCC)  Cohen's Kappa
@@ -247,10 +247,10 @@ Server: global forest 800 trees (+100 valid, 0 rejected) | MCC = 0.6935 | Delta 
 ============================== Round 9 ==============================
 ZKP client authentication (per client):
                  Client Proof  Vectors  ZKP Authentication Time (ms)  ZKP Proof Generation Time (ms)  ZKP Proof Verification Time (ms)
-      Client 1(Hungary) Valid      416                       17.8548                          7.3775                           10.4773
-  Client 2(Switzerland) Valid      175                       17.8401                          7.3159                           10.5241
-Client 3(VA Long Beach) Valid      472                       18.6207                          7.4384                           11.1823
-    Client 4(Cleveland) Valid      888                       18.0430                          7.3530                           10.6901
+      Client 1(Hungary) Valid      416                       21.1848                          7.2587                           13.9261
+  Client 2(Switzerland) Valid      175                       21.8991                          7.7226                           14.1766
+Client 3(VA Long Beach) Valid      472                       22.5255                          7.4292                           15.0962
+    Client 4(Cleveland) Valid      888                       24.9444                          9.7990                           15.1454
 
 ZKP authentication status:
   Client 1(Hungary)       : Authentication Successful (proof valid, update accepted)
@@ -258,12 +258,12 @@ ZKP authentication status:
   Client 3(VA Long Beach) : Authentication Successful (proof valid, update accepted)
   Client 4(Cleveland)     : Authentication Successful (proof valid, update accepted)
 
-Encoding and decoding times (per client):
-                 Client  Encoding Time (ms)  Decoding Time (ms)
-      Client 1(Hungary)              3.3644              5.4372
-  Client 2(Switzerland)              2.0824              3.7258
-Client 3(VA Long Beach)              4.0159              5.7701
-    Client 4(Cleveland)              5.9420             10.4480
+Whole-tree transfer times (per client):
+                 Client  Serialization Time (ms)  Tree Validation Time (ms)
+      Client 1(Hungary)                   3.2047                     9.9294
+  Client 2(Switzerland)                   2.5237                     4.9109
+Client 3(VA Long Beach)                   3.8950                    11.3739
+    Client 4(Cleveland)                   7.1490                    19.2524
 
 Validation metrics of the global model after round 9:
                  Client  Accuracy  Precision  Recall  Specificity  F1 Score  Matthews Correlation Coefficient (MCC)  Cohen's Kappa
@@ -277,10 +277,10 @@ Server: global forest 900 trees (+100 valid, 0 rejected) | MCC = 0.6935 | Delta 
 ============================== Round 10 ==============================
 ZKP client authentication (per client):
                  Client Proof  Vectors  ZKP Authentication Time (ms)  ZKP Proof Generation Time (ms)  ZKP Proof Verification Time (ms)
-      Client 1(Hungary) Valid      458                       25.2433                          9.7579                           15.4854
-  Client 2(Switzerland) Valid      176                       22.2233                          7.0280                           15.1953
-Client 3(VA Long Beach) Valid      471                       22.1974                          7.1551                           15.0423
-    Client 4(Cleveland) Valid      885                       26.2785                         10.6873                           15.5912
+      Client 1(Hungary) Valid      458                       17.9429                          7.6090                           10.3339
+  Client 2(Switzerland) Valid      176                       17.4166                          6.9576                           10.4589
+Client 3(VA Long Beach) Valid      471                       17.6732                          7.0794                           10.5937
+    Client 4(Cleveland) Valid      885                       17.8825                          7.2943                           10.5882
 
 ZKP authentication status:
   Client 1(Hungary)       : Authentication Successful (proof valid, update accepted)
@@ -288,12 +288,12 @@ ZKP authentication status:
   Client 3(VA Long Beach) : Authentication Successful (proof valid, update accepted)
   Client 4(Cleveland)     : Authentication Successful (proof valid, update accepted)
 
-Encoding and decoding times (per client):
-                 Client  Encoding Time (ms)  Decoding Time (ms)
-      Client 1(Hungary)              6.2573             10.9656
-  Client 2(Switzerland)              2.1630              5.1759
-Client 3(VA Long Beach)              3.5769             11.5218
-    Client 4(Cleveland)             11.6528             19.6127
+Whole-tree transfer times (per client):
+                 Client  Serialization Time (ms)  Tree Validation Time (ms)
+      Client 1(Hungary)                   3.5832                     5.6661
+  Client 2(Switzerland)                   2.1404                     2.7712
+Client 3(VA Long Beach)                   3.6154                     6.0543
+    Client 4(Cleveland)                   6.1427                    10.0987
 
 Validation metrics of the global model after round 10:
                  Client  Accuracy  Precision  Recall  Specificity  F1 Score  Matthews Correlation Coefficient (MCC)  Cohen's Kappa
@@ -302,7 +302,7 @@ Validation metrics of the global model after round 10:
 Client 3(VA Long Beach)    0.9250     0.9355  0.9667       0.8000    0.9508                                  0.7950         0.7931
     Client 4(Cleveland)    0.7213     0.6774  0.7500       0.6970    0.7119                                  0.4455         0.4434
           Global Server    0.8486     0.8558  0.8725       0.8193    0.8641                                  0.6935         0.6934
-Server: global forest 1000 trees (+100 valid, 0 rejected) | MCC = 0.6935 | Delta M = 0.0000 (eps_M 0.001) | Delta P = 0.00266 (eps_P 0.005) | patience 3/3 | round time 0.5 s | DP budget: epsilon = 2.659 per leaf vector this round (pure DP); per patient 66.47 this round, 632.14 in total
+Server: global forest 1000 trees (+100 valid, 0 rejected) | MCC = 0.6935 | Delta M = 0.0000 (eps_M 0.001) | Delta P = 0.00266 (eps_P 0.005) | patience 3/3 | round time 0.4 s | DP budget: epsilon = 2.659 per leaf vector this round (pure DP); per patient 66.47 this round, 632.14 in total
 
 === Metrics averaged over all 10 rounds ===
                  Client  Accuracy  Precision  Recall  Specificity  F1 Score  Matthews Correlation Coefficient (MCC)  Cohen's Kappa
@@ -315,22 +315,22 @@ Client 3(VA Long Beach)    0.9100     0.9233  0.9600       0.7600    0.9411     
 === ZKP time analysis over 10 rounds (min, max and mean per client) ===
 ZKP Authentication Time (ms):
                  Client  Min (ms)  Max (ms)  Mean (ms)
-      Client 1(Hungary)   17.8314   33.5072    22.7789
-  Client 2(Switzerland)   17.8401   33.5212    22.0599
-Client 3(VA Long Beach)   17.5408   30.9188    22.2147
-    Client 4(Cleveland)   18.0062   33.1837    23.0776
+      Client 1(Hungary)   17.5928   21.4480    18.7677
+  Client 2(Switzerland)   17.4166   23.2180    20.1673
+Client 3(VA Long Beach)   17.3785   26.2430    20.0440
+    Client 4(Cleveland)   17.5638   24.9444    19.6735
 ZKP Proof Generation Time (ms):
                  Client  Min (ms)  Max (ms)  Mean (ms)
-      Client 1(Hungary)    6.9850   12.9274     9.0093
-  Client 2(Switzerland)    7.0162   12.5221     8.2817
-Client 3(VA Long Beach)    7.0169   11.2103     8.4036
-    Client 4(Cleveland)    7.3279   11.4837     9.0462
+      Client 1(Hungary)    6.9348   11.0529     7.8639
+  Client 2(Switzerland)    6.9274   12.3837     8.1538
+Client 3(VA Long Beach)    6.9455   12.4122     8.2056
+    Client 4(Cleveland)    7.1332    9.7990     7.5916
 ZKP Proof Verification Time (ms):
                  Client  Min (ms)  Max (ms)  Mean (ms)
-      Client 1(Hungary)   10.3265   24.0150    13.7696
-  Client 2(Switzerland)   10.5241   23.7706    13.7783
-Client 3(VA Long Beach)   10.3516   23.3654    13.8111
-    Client 4(Cleveland)   10.6052   22.9675    14.0314
+      Client 1(Hungary)   10.3339   13.9261    10.9038
+  Client 2(Switzerland)   10.2514   16.2907    12.0135
+Client 3(VA Long Beach)   10.4330   15.7928    11.8384
+    Client 4(Cleveland)   10.4306   15.7696    12.0819
 
 === ZKP authentication summary ===
                  Client  Rounds  Successful  Failed        ZKP Authentication
@@ -348,19 +348,19 @@ Client 3(VA Long Beach)         250             250               0
     Client 4(Cleveland)         250             250               0
 Tree validation: 1000/1000 trees accepted, 0 rejected (schema, node references, split fields, leaf outputs, size and depth limits)
 
-=== Encoding and decoding time analysis over 10 rounds (min, max and mean per client) ===
-Encoding Time (ms):
+=== Whole-tree transfer time analysis over 10 rounds (min, max and mean per client) ===
+Serialization Time (ms):
                  Client  Min (ms)  Max (ms)  Mean (ms)
-      Client 1(Hungary)    3.3644    6.8737     5.1033
-  Client 2(Switzerland)    2.0824    4.4524     2.8849
-Client 3(VA Long Beach)    3.5769    8.0075     4.6821
-    Client 4(Cleveland)    5.8758   11.6528     8.1482
-Decoding Time (ms):
+      Client 1(Hungary)    3.2047    5.9527     4.1961
+  Client 2(Switzerland)    2.0580    3.6886     2.6007
+Client 3(VA Long Beach)    3.6154    6.8646     4.5354
+    Client 4(Cleveland)    5.8307    7.9533     6.4178
+Tree Validation Time (ms):
                  Client  Min (ms)  Max (ms)  Mean (ms)
-      Client 1(Hungary)    5.4372   12.5764     8.3350
-  Client 2(Switzerland)    2.8969    5.9824     4.2045
-Client 3(VA Long Beach)    5.7701   13.3362     9.0505
-    Client 4(Cleveland)    9.7550  125.6185    27.1291
+      Client 1(Hungary)    5.2226    9.9294     6.2793
+  Client 2(Switzerland)    2.6388    5.0809     3.3733
+Client 3(VA Long Beach)    5.4807   12.3220     7.2184
+    Client 4(Cleveland)    9.4180  106.2359    22.3076
 
 Converged at round 10: Delta M <= 0.001 and Delta P <= 0.005 for 3 consecutive rounds (seed 42).
 Global forest G_10: 1000 trees saved as explicit tree structures to /home/user/Federated-Learning/outputs/run/global_forest.json (2.86 MB)
