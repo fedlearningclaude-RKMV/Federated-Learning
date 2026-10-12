@@ -1,0 +1,49 @@
+round,party,task,seconds
+1,Hungary,local training,0.050140220000002955
+1,Switzerland,local training,0.043749666999929104
+1,VA Long Beach,local training,0.046818936000022404
+1,Cleveland,local training,0.049370438999972066
+1,Server,aggregation,1.4893000070514972e-05
+1,Hungary,validation,0.016551977999938572
+1,Switzerland,validation,0.01609959899997193
+1,VA Long Beach,validation,0.01619012499998007
+1,Cleveland,validation,0.016214198000056967
+2,Hungary,local training,0.047281602999987626
+2,Switzerland,local training,0.04247578700005761
+2,VA Long Beach,local training,0.04672240699994745
+2,Cleveland,local training,0.04975529800003642
+2,Hungary,validation,0.03462101299999176
+2,Switzerland,validation,0.03368313999999373
+2,VA Long Beach,validation,0.03405417200008287
+2,Cleveland,validation,0.035782824999955665
+2,Server,aggregation,0.0003033659999118754
+2,Hungary,validation,0.01654232199996386
+2,Switzerland,validation,0.01745799499997247
+2,VA Long Beach,validation,0.016512339999962933
+2,Cleveland,validation,0.0173895430000357
+3,Hungary,local training,0.05275494299996808
+3,Switzerland,local training,0.04849325999998655
+3,VA Long Beach,local training,0.047670566999954644
+3,Cleveland,local training,0.05526926699997148
+3,Hungary,validation,0.03724752499999795
+3,Switzerland,validation,0.03667217700001402
+3,VA Long Beach,validation,0.03603650800005198
+3,Cleveland,validation,0.037441465000028984
+3,Server,aggregation,0.00035195900011331105
+3,Hungary,validation,0.017564154999945458
+3,Switzerland,validation,0.016666045999954804
+3,VA Long Beach,validation,0.021967162999999346
+3,Cleveland,validation,0.02032713899995997
+4,Hungary,local training,0.06479551399991124
+4,Switzerland,local training,0.052415119000102095
+4,VA Long Beach,local training,0.05765256200004387
+4,Cleveland,local training,0.05756995199999437
+4,Hungary,validation,0.03807319999998526
+4,Switzerland,validation,0.03810898699998688
+4,VA Long Beach,validation,0.03552256000000398
+4,Cleveland,validation,0.035156615999994756
+4,Server,aggregation,0.0005360580000797199
+4,Hungary,validation,0.01679210100007822
+4,Switzerland,validation,0.021839768000063486
+4,VA Long Beach,validation,0.0189992320000556
+4,Cleveland,validation,0.01700526299998728
