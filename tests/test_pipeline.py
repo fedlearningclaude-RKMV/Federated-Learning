@@ -1,9 +1,11 @@
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from fedrf_diff.metrics import MCC
-from fedrf_diff.pipeline import main, run_dp_sweep, run_federation
+from fedrf_diff.pipeline import CONVERGED, MAX_ROUNDS, main, run_dp_sweep, run_federation
 from fedrf_diff.report import SERVER
 from fedrf_diff.rf_kernel import forest_proba
 
@@ -13,22 +15,35 @@ def test_federation_rounds(small_cfg, capsys):
     out = capsys.readouterr().out
     assert "Modified Pedersen ZKP authentication: pedersen2048 group, lambda = 2" in out
     assert "Authentication Successful (proof valid, update accepted)" in out
-    assert res.rounds_run == 3
-    n_trees = 4 * small_cfg["trees_per_client"]
-    assert res.convergence["Global Trees"].tolist() == [n_trees, 2 * n_trees, 3 * n_trees]
-    assert (res.zkp.Proof == "Valid").all() and (res.convergence["Trees Rejected"] == 0).all()
-    assert res.convergence["Delta M"].isna().tolist() == [True, False, False]
+    assert "Round 0 (initialisation)" in out and "Local three-part convergence test" in out
+    assert res.rounds_run == 3 and res.status in (CONVERGED, MAX_ROUNDS)
+    assert (res.zkp.Proof == "Valid").all() and (res.rounds["Trees Rejected"] == 0).all()
+    # Round 1 uploads F_k^(0); later rounds upload the capped F_k^(t-1)
+    assert res.zkp[res.zkp.Round == 1]["Trees"].tolist() == [4] * 4
+    assert (res.zkp[res.zkp.Round > 1]["Trees"] <= small_cfg["local_budget"]).all()
+    assert (res.rounds["Global Trees |G|"] <= small_cfg["global_budget"]).all()
+    assert all(len(c.forest) <= small_cfg["local_budget"] for c in res.clients)
     assert set(res.metrics.Client) == {c.name for c in res.clients} | {SERVER}
-    # The Delta P aggregated from the clients' partial sums equals Delta P of the pooled global probabilities
-    X_val = np.concatenate([c.X_val for c in res.clients])
-    trees = res.server.trees
-    now, before = forest_proba(trees, X_val), forest_proba(trees[:-n_trees], X_val)
-    assert res.convergence["Delta P"].iloc[-1] == pytest.approx(0.5 * np.abs(now - before).sum(axis=1).mean())
-    assert res.epsilon_per_patient == sum(4 * e for e in res.schedule)
+    # Global Server row = G^(t) scored on all validation patients pooled
+    X = np.concatenate([c.X_val for c in res.clients])
+    y = np.concatenate([c.y_val for c in res.clients])
+    acc = np.mean(forest_proba(res.server.global_forest, X).argmax(axis=1) == y)
+    last = res.metrics[(res.metrics.Round == 3) & (res.metrics.Client == SERVER)]
+    assert last["Accuracy"].item() == pytest.approx(acc)
+    # Per patient: F_k^(0) plus one supplementary forest per round
+    assert res.epsilon_per_patient == pytest.approx(4 * sum(res.schedule))
+
+
+def test_uploads_carry_trees_and_schema_only(small_cfg):
+    res = run_federation(small_cfg, None, 1, with_zkp=False, verbose=False)
+    upload = json.loads(res.clients[0].serialize(2))
+    assert set(upload) == {"schema_id", "schema_version", "client_id", "round", "privacy", "trees"}
+    assert all(set(t) == {"schema_version", "task", "classes", "client_id", "tree_id", "nodes"}
+               for t in upload["trees"])
 
 
 def test_dp_sweep_reproduces_the_main_run(small_cfg):
-    main_run = run_federation(small_cfg, (2.0, 3.0), 3, verbose=False)
+    main_run = run_federation(small_cfg, (2.0, 3.0), 3, verbose=False, stop_early=False)
     names = [c.name for c in main_run.clients]
     avg, last = run_dp_sweep(small_cfg, 3, names)
     row = avg[avg["Epsilon per round"] == "U[2, 3]"].iloc[0]
@@ -38,21 +53,24 @@ def test_dp_sweep_reproduces_the_main_run(small_cfg):
     assert avg.loc[avg["Epsilon per round"] == "No DP", "Epsilon spent per patient"].item() == 0.0
 
 
-def test_combined_criterion_stops_the_run(small_cfg):
-    cfg = dict(small_cfg, eps_metric=1.0, eps_pred=1.0, patience=2, max_rounds=10)
+def test_all_client_convergence_stops_the_run(small_cfg):
+    cfg = dict(small_cfg, tau_loss=10.0, tau_pred=1.0, tau_agree=1.0, patience=2, max_rounds=10)
     res = run_federation(cfg, None, 10, with_zkp=False, verbose=False)
-    assert res.converged and res.rounds_run == 3  # round 1 initialises, rounds 2 and 3 pass
-    assert res.convergence["Stable Rounds"].tolist() == [0, 1, 2]
+    assert res.status == CONVERGED and res.rounds_run == 2
+    assert res.local.pivot(index="Round", columns="Client", values="q_k").values.tolist() == [[1] * 4, [2] * 4]
+    strict = dict(small_cfg, tau_loss=0.0, tau_pred=0.0, tau_agree=0.0)
+    res = run_federation(strict, None, 3, with_zkp=False, verbose=False)
+    assert res.status == MAX_ROUNDS and res.rounds_run == 3
 
 
 def test_main_writes_outputs(small_cfg, capsys):
     cfg = dict(small_cfg, max_rounds=2, dp_sweep=[2.0, None])
     main(cfg)
     out = capsys.readouterr().out
-    assert "=== Metrics averaged over all 2 rounds ===" in out and "Accuracy vs DP budget" in out
-    for name in ["validation_metrics", "zkp_times", "tree_transfer_times", "communication_computation_cost",
-                 "convergence", "dp_budget_accuracy"]:
+    assert "=== Global model G^(t): metrics averaged over all" in out and "Accuracy of G^(t) vs DP budget" in out
+    for name in ["validation_metrics", "local_convergence", "zkp_times", "tree_transfer_times",
+                 "communication_computation_cost", "rounds", "dp_budget_accuracy"]:
         assert not pd.read_csv(cfg["out_dir"] / f"{name}.csv").empty
-    assert (cfg["out_dir"] / "global_forest.json").exists()
-    metrics = pd.read_csv(cfg["out_dir"] / "validation_metrics.csv")
-    assert np.isfinite(metrics[MCC]).all()
+    forests = cfg["out_dir"] / "forests"
+    assert (forests / "global_forest.json").exists() and len(list(forests.glob("client_*_forest.json"))) == 4
+    assert np.isfinite(pd.read_csv(cfg["out_dir"] / "validation_metrics.csv")[MCC]).all()

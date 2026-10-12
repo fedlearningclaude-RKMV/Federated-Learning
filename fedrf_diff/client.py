@@ -1,28 +1,37 @@
-"""Federated client (one hospital): local training, whole-tree export, DP, proof, evaluation."""
+"""Federated client (one hospital).
+
+    Step 1  train the initial forest F_k^(0) on the private training split
+    Step 2  upload the complete forest F_k^(t-1) (explicit trees + schema metadata) with a ZKP
+    Step 5  receive G^(t), train a supplementary forest H_k^(t) and build
+            F_k^(t) = CapOrPrune(TreePool(G^(t), H_k^(t)), B_k)
+    Step 6  run the three-part convergence test on the fixed validation split and return only
+            the boolean flag b_k^(t)
+
+CapOrPrune keeps the B_k pool trees with the highest balanced accuracy on the client's
+training patients that each tree did not train on: its out-of-bag patients for a tree this
+client grew, every training patient for a tree grown elsewhere. The validation split is never
+used for pruning, so the convergence test stays an honest held-out check.
+"""
 
 import hashlib
 import json
-from dataclasses import dataclass
 
 import numpy as np
 
 from . import zkp
 from .alignment import check_local_data, encode_features, imputation_stats
-from .convergence import prediction_change_sum
+from .convergence import LocalConvergence, log_loss
 from .data import TARGET
 from .metrics import confusion_counts
-from .privacy import laplace_scale, privatize_leaves
+from .privacy import privatize_leaves
 from .rf_kernel import export_tree, train_local_forest, tree_to_message
 
-REPORT_BYTES = 4 * 5 + 8  # confusion counts + validation size (int32) and the Delta P sum (float64)
+FLAG_BYTES = 1  # b_k^(t) is the only thing a client reports about its validation data
 
 
-@dataclass(frozen=True)
-class EvalReport:
-    """What a client sends back after scoring the global forest: counts only, no patients."""
-    counts: np.ndarray  # [tn, fp, fn, tp]
-    pred_change_sum: float | None  # sum_i ||P_t(i, .) - P_(t-1)(i, .)||_1 / 2, None in round 1
-    n: int
+def balanced_accuracy(y, pred, classes):
+    recalls = [np.mean(pred[y == c] == c) for c in classes if np.any(y == c)]
+    return float(np.mean(recalls)) if recalls else 0.0
 
 
 class HospitalClient:
@@ -33,10 +42,15 @@ class HospitalClient:
         self.name = f"Client {cid}({hospital})"
         self.client_id = f"client_{cid}"
         self.schema, self.cfg = schema, cfg
+        self.classes = np.asarray(schema.classes)
         self.train_raw, self.val_raw = train, val
         self.keypair = zkp.keygen(cfg["zkp_lambda"]) if with_zkp else None
-        self._val_proba = {}  # tree_id -> class probabilities of that global tree on the validation patients
-        self._prev_proba = None
+        self.forest = []  # F_k^(t)
+        self.global_forest = []  # G^(t) as last received
+        self.convergence = LocalConvergence(cfg["tau_loss"], cfg["tau_pred"], cfg["tau_agree"], cfg["patience"])
+        self._in_bag = {}  # tree_id -> training rows a tree grown here was fitted on
+        self._val_proba = {}  # tree_id -> class probabilities on the validation patients (cache)
+        self._train_score = {}  # tree_id -> CapOrPrune score (cache)
 
     def imputation_stats(self):
         return imputation_stats(self.train_raw)
@@ -50,50 +64,75 @@ class HospitalClient:
     def _seed(self, rnd, stream):
         return np.random.SeedSequence([self.cfg["seed"], rnd, self.cid, stream])
 
-    # Step 3 · local Random Forest with m new trees
-    def train_round(self, rnd):
-        seed = int(self._seed(rnd, 0).generate_state(1)[0])
-        return train_local_forest(self.X_train, self.y_train, self.cfg["trees_per_client"], seed,
-                                  self.cfg["rf_params"])
-
-    # Step 4 · explicit tree export
-    def export(self, forest, rnd):
-        classes = list(self.schema.classes)
-        return [export_tree(est, classes, f"{self.client_id}_r{rnd:03d}_t{j:03d}", self.client_id)
-                for j, est in enumerate(forest.estimators_)]
-
-    # Laplace DP on every leaf vector before anything leaves the hospital
-    def privatize(self, trees, epsilon, rnd):
-        if epsilon is None:
-            return trees
+    # Steps 1 and 5 · a local forest of explicit trees, Laplace DP on every leaf vector
+    def grow(self, rnd, n_trees, epsilon):
+        """F_k^(0) at round 0, the supplementary forest H_k^(t) afterwards."""
+        rf = train_local_forest(self.X_train, self.y_train, n_trees, int(self._seed(rnd, 0).generate_state(1)[0]),
+                                self.cfg["rf_params"])
         rng = np.random.default_rng(self._seed(rnd, 1))
-        return [t.with_values(privatize_leaves(t.value, t.is_leaf, epsilon, self.cfg["dp_clip"], rng)) for t in trees]
+        trees = []
+        for j, (est, rows) in enumerate(zip(rf.estimators_, rf.estimators_samples_)):
+            tree = export_tree(est, list(self.schema.classes), f"{self.client_id}_r{rnd:03d}_t{j:03d}", self.client_id)
+            if epsilon is not None:
+                tree = tree.with_values(privatize_leaves(tree.value, tree.is_leaf, epsilon, self.cfg["dp_clip"], rng))
+            self._in_bag[tree.tree_id] = np.unique(rows)
+            trees.append(tree)
+        return trees
 
-    # Step 4-5 · serialization of the whole trees and their metadata (transport format, not an encoding)
-    def serialize(self, trees, rnd, epsilon):
-        privacy = None if epsilon is None else {
-            "mechanism": "laplace", "epsilon": epsilon, "clip_l1": self.cfg["dp_clip"],
-            "scale": laplace_scale(epsilon, self.cfg["dp_clip"])}
+    def initialise(self, epsilon):
+        """Step 1 · F_k^(0) and the round-0 reference L_k^(0), y_k^(0)."""
+        self.forest = self.grow(0, self.cfg["initial_trees"], epsilon)
+        proba = self.proba(self.forest)
+        self.convergence.initialise(log_loss(self.y_val, proba, self.classes), self.predict(proba))
+
+    # Step 2 · the complete local forest with its schema metadata (transport format, not an encoding)
+    def serialize(self, rnd, privacy=None):
         update = {"schema_id": self.schema.schema_id, "schema_version": self.schema.version,
                   "client_id": self.client_id, "round": rnd, "privacy": privacy,
-                  "trees": [tree_to_message(t, self.schema) for t in trees]}
+                  "trees": [tree_to_message(t, self.schema) for t in self.forest]}
         return json.dumps(update, separators=(",", ":"), allow_nan=False).encode()
 
-    # Step 5 · Modified Pedersen proof bound to this exact update
     def prove(self, payload, rnd):
         context = zkp.update_context(self.schema.schema_id, rnd, self.client_id)
         return zkp.prove(self.keypair, hashlib.sha256(payload).digest(), context)
 
-    # Step 8 · score the global forest G_t on the local validation patients
-    def receive_global_update(self, added, removed):
-        for tree_id in removed:
-            del self._val_proba[tree_id]
-        for tree in added:
-            self._val_proba[tree.tree_id] = tree.predict_proba(self.X_val)
+    # Step 5 · local refinement
+    def _score(self, tree):
+        if tree.tree_id not in self._train_score:
+            rows = np.ones(len(self.y_train), dtype=bool)
+            if tree.tree_id in self._in_bag:
+                rows[self._in_bag[tree.tree_id]] = False
+            pred = self.predict(tree.predict_proba(self.X_train[rows])) if rows.any() else np.array([])
+            self._train_score[tree.tree_id] = balanced_accuracy(self.y_train[rows], pred, self.classes)
+        return self._train_score[tree.tree_id]
 
-    def evaluate(self):
-        proba = sum(self._val_proba.values()) / len(self._val_proba)
-        pred = np.asarray(self.schema.classes)[proba.argmax(axis=1)]
-        change = None if self._prev_proba is None else prediction_change_sum(proba, self._prev_proba)
-        self._prev_proba = proba
-        return EvalReport(confusion_counts(self.y_val, pred), change, len(self.y_val))
+    def cap_or_prune(self, pool):
+        budget = self.cfg["local_budget"]
+        ranked = sorted(pool, key=lambda t: (self._score(t), t.tree_id), reverse=True)
+        return ranked[:budget]
+
+    def refine(self, global_forest, rnd, epsilon):
+        """F_k^(t) = CapOrPrune(TreePool(G^(t), H_k^(t)), B_k); returns H_k^(t)."""
+        self.global_forest = list(global_forest)
+        supplementary = self.grow(rnd, self.cfg["supplementary_trees"], epsilon)
+        pool = {t.tree_id: t for t in self.global_forest + supplementary}
+        self.forest = self.cap_or_prune(list(pool.values()))
+        return supplementary
+
+    # Step 6 · three-part convergence test on the fixed validation split
+    def proba(self, trees):
+        for t in trees:
+            if t.tree_id not in self._val_proba:
+                self._val_proba[t.tree_id] = t.predict_proba(self.X_val)
+        return sum(self._val_proba[t.tree_id] for t in trees) / len(trees)
+
+    def predict(self, proba):
+        return self.classes[proba.argmax(axis=1)]
+
+    def convergence_check(self):
+        local_proba = self.proba(self.forest)
+        local_pred = self.predict(local_proba)
+        global_pred = self.predict(self.proba(self.global_forest)) if self.global_forest else None
+        check = self.convergence.update(log_loss(self.y_val, local_proba, self.classes), local_pred, global_pred)
+        global_counts = None if global_pred is None else confusion_counts(self.y_val, global_pred)
+        return check, confusion_counts(self.y_val, local_pred), global_counts

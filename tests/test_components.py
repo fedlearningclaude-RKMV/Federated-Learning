@@ -4,18 +4,22 @@ import json
 
 import numpy as np
 import pytest
-from sklearn.metrics import (accuracy_score, cohen_kappa_score, f1_score, matthews_corrcoef, precision_score,
-                             recall_score)
+from sklearn.metrics import (accuracy_score, cohen_kappa_score, f1_score, log_loss as sk_log_loss, matthews_corrcoef,
+                             precision_score, recall_score)
 
 from fedrf_diff import zkp
 from fedrf_diff.alignment import check_local_data
 from fedrf_diff.config import CONFIG
-from fedrf_diff.convergence import CombinedConvergence, prediction_change_sum
+from fedrf_diff.client import balanced_accuracy
+from fedrf_diff.convergence import LocalConvergence, log_loss
 from fedrf_diff.data import load_hospitals
 from fedrf_diff.metrics import MCC, confusion_counts, metrics_from_counts
 from fedrf_diff.privacy import PrivacyAccountant, epsilon_schedule, laplace_scale, privatize_leaves
-from fedrf_diff.rf_kernel import forest_proba
-from fedrf_diff.server import InvalidUpdate, Limits, check_update, load_forest
+from fedrf_diff.rf_kernel import forest_proba, train_local_forest
+from fedrf_diff.server import (FederatedServer, InvalidUpdate, Limits, check_update, load_forest, save_forest,
+                               select_trees)
+
+CREATORS = {"client_1", "client_2", "client_3", "client_4"}
 
 
 # ── Data and schema ─────────────────────────────────────────────────────────
@@ -69,7 +73,8 @@ def test_proof_accepts_only_the_bound_update(lam):
 def test_server_rejects_tampered_update(federation):
     schema, clients, server = federation
     c = clients[0]
-    payload = c.serialize(c.export(c.train_round(1), 1), 1, None)
+    c.initialise(None)
+    payload = c.serialize(1)
     proof = c.prove(payload, 1)
     assert server.verify(c.client_id, payload, proof, 1)
     tampered = payload.replace(b'"threshold":', b'"threshold":1', 1)
@@ -81,10 +86,12 @@ def test_server_rejects_tampered_update(federation):
 def test_explicit_trees_reproduce_the_local_forest(federation):
     schema, clients, server = federation
     c = clients[3]
-    forest = c.train_round(1)
-    trees = c.export(forest, 1)
+    trees = c.grow(0, 6, None)
+    seed = int(c._seed(0, 0).generate_state(1)[0])
+    forest = train_local_forest(c.X_train, c.y_train, 6, seed, c.cfg["rf_params"])
     np.testing.assert_allclose(forest_proba(trees, c.X_val), forest.predict_proba(c.X_val), atol=1e-12)
-    received, rejected = server.receive(c.client_id, c.serialize(trees, 1, None), 1)
+    c.forest = trees
+    received, rejected = server.receive(c.client_id, c.serialize(1), 1, CREATORS)
     assert rejected == []
     np.testing.assert_array_equal(forest_proba(received, c.X_val), forest_proba(trees, c.X_val))
 
@@ -92,7 +99,8 @@ def test_explicit_trees_reproduce_the_local_forest(federation):
 def _valid_update(federation):
     schema, clients, server = federation
     c = clients[0]
-    return json.loads(c.serialize(c.export(c.train_round(1), 1), 1, None)), c.client_id, schema
+    c.initialise(None)
+    return json.loads(c.serialize(1)), c.client_id, schema
 
 
 def _set_node(update, i, **fields):
@@ -105,6 +113,7 @@ def _set_node(update, i, **fields):
     (lambda u: u["trees"][0].update(schema_version="features-v0"), "schema version"),
     (lambda u: u["trees"][0].update(classes=[1, 0]), "class order"),
     (lambda u: u["trees"][0].update(tree_id="client_9_r001_t000"), "tree id"),
+    (lambda u: u["trees"][0].update(client_id="client_9", tree_id="client_9_r000_t000"), "unknown client"),
     (lambda u: _set_node(u, 0, feature=99), "unknown feature"),
     (lambda u: _set_node(u, 0, feature=True), "unknown feature"),
     (lambda u: _set_node(u, 0, threshold="1.5"), "threshold"),
@@ -119,7 +128,7 @@ def test_malformed_tree_is_rejected_alone(federation, limits, corrupt, reason):
     update, client_id, schema = _valid_update(federation)
     n_trees = len(update["trees"])
     corrupt(update)
-    trees, rejected = check_update(json.dumps(update).encode(), schema, limits, client_id, 1)
+    trees, rejected = check_update(json.dumps(update).encode(), schema, limits, client_id, 1, CREATORS)
     assert len(trees) == n_trees - 1
     assert len(rejected) == 1 and reason in rejected[0][1]
 
@@ -133,7 +142,7 @@ def test_invalid_leaf_and_shared_child_are_rejected(federation, limits):
     nodes2 = update["trees"][1]["nodes"]
     inner = [n for n in nodes2 if not n.get("leaf") and n["node_id"] != 0]
     inner[0]["left_child"] = nodes2[0]["left_child"] if nodes2[0]["left_child"] != inner[0]["node_id"] else 0
-    trees, rejected = check_update(json.dumps(update).encode(), schema, limits, client_id, 1)
+    trees, rejected = check_update(json.dumps(update).encode(), schema, limits, client_id, 1, CREATORS)
     assert len(rejected) == 2
     assert "probability distribution" in rejected[0][1]
 
@@ -141,7 +150,7 @@ def test_invalid_leaf_and_shared_child_are_rejected(federation, limits):
 def test_tree_too_deep_is_rejected(federation):
     update, client_id, schema = _valid_update(federation)
     shallow = Limits(10 ** 8, 500, 20_000, max_depth=2)
-    trees, rejected = check_update(json.dumps(update).encode(), schema, shallow, client_id, 1)
+    trees, rejected = check_update(json.dumps(update).encode(), schema, shallow, client_id, 1, CREATORS)
     assert rejected and all("depth" in r for _, r in rejected)
 
 
@@ -153,37 +162,88 @@ def test_malformed_update_is_rejected_whole(federation, limits):
     for payload, rnd, cid in [(raw, 2, client_id), (raw, 1, "client_2"), (b"{not json", 1, client_id),
                               (json.dumps(with_nan).encode(), 1, client_id)]:
         with pytest.raises(InvalidUpdate):
-            check_update(payload, schema, limits, cid, rnd)
+            check_update(payload, schema, limits, cid, rnd, CREATORS)
     wrong = copy.deepcopy(update)
     wrong["schema_id"] = "0" * 16
     with pytest.raises(InvalidUpdate):
-        check_update(json.dumps(wrong).encode(), schema, limits, client_id, 1)
+        check_update(json.dumps(wrong).encode(), schema, limits, client_id, 1, CREATORS)
     with pytest.raises(InvalidUpdate):
-        check_update(raw, schema, Limits(100, 500, 20_000, 64), client_id, 1)
+        check_update(raw, schema, Limits(100, 500, 20_000, 64), client_id, 1, CREATORS)
 
 
-def test_replayed_trees_and_per_client_cap(federation):
+def test_tree_provenance_is_enforced(federation):
     schema, clients, server = federation
-    c = clients[0]
-    payload = c.serialize(c.export(c.train_round(1), 1), 1, None)
-    trees, _ = server.receive(c.client_id, payload, 1)
-    added, removed = server.aggregate(trees)
-    assert len(added) == len(trees) and removed == []
-    again, rejected = server.receive(c.client_id, payload, 1)
-    assert again == [] and all(r == "replayed tree id" for _, r in rejected)
-    server.max_trees_per_client = 3
-    newer, _ = server.receive(c.client_id, c.serialize(c.export(c.train_round(2), 2), 2, None), 2)
-    added, removed = server.aggregate(newer)
-    assert len(server.forest) == 3 and set(removed) == {t.tree_id for t in trees}
-    assert [t.tree_id for t in server.trees] == [t.tree_id for t in newer[-3:]]
+    c1, c2 = clients[0], clients[1]
+    c1.initialise(None)
+    first, _ = server.receive(c1.client_id, c1.serialize(1), 1, CREATORS)
+    # client 2 may forward an identical copy of client 1's tree (it came back inside G)
+    c2.forest = first[:2]
+    again, rejected = server.receive(c2.client_id, c2.serialize(1), 1, CREATORS)
+    assert len(again) == 2 and rejected == []
+    # but it may neither alter that copy nor mint a new id in client 1's name
+    upload = json.loads(c2.serialize(1))
+    next(n for n in upload["trees"][0]["nodes"] if "threshold" in n)["threshold"] += 1.0
+    upload["trees"][1]["tree_id"] = "client_1_r099_t000"
+    kept, rejected = server.receive(c2.client_id, json.dumps(upload).encode(), 1, CREATORS)
+    assert kept == [] and [r for _, r in rejected] == ["altered copy of a known tree",
+                                                       "new tree id claimed for another client"]
+
+
+def test_select_trees_policies(federation):
+    _, clients, _ = federation
+    pool = []
+    for c in clients:
+        pool += c.grow(1, 3, None) + c.grow(2, 3, None)
+    balanced = select_trees(pool, "client-balanced", 8)
+    assert len(balanced) == 8 and {t.client_id for t in balanced} == CREATORS
+    assert all(t.tree_id.split("_r")[1].startswith("002") for t in balanced)  # newest first per client
+    assert [t.tree_id for t in select_trees(pool, "newest", 3)] == sorted((t.tree_id for t in pool), reverse=True)[:3]
+    old = next(t for t in pool if t.tree_id == "client_1_r001_t000")
+    consensus = select_trees(pool, "consensus", 4, votes={old.tree_id: 4})
+    assert old in consensus and len(select_trees(pool, "consensus", 100)) == len(pool)
+    with pytest.raises(ValueError):
+        select_trees(pool, "average", 4)
+
+
+def test_aggregation_pools_the_union_and_caps_at_b(federation):
+    schema, clients, _ = federation
+    server = FederatedServer(schema, Limits.from_config(CONFIG), 2, "client-balanced", 5)
+    forests = [c.grow(0, 3, None) for c in clients]
+    shared = forests[0][0]
+    pool_size = server.aggregate(forests + [[shared]])  # a tree held by two clients counts once
+    assert pool_size == 12 and len(server.global_forest) == 5
+    assert server.stopping_decision([True] * 4, 3, 50) == "all-client convergence"
+    assert server.stopping_decision([True, False, True, True], 50, 50) == "maximum rounds reached"
+    assert server.stopping_decision([True, False, True, True], 3, 50) is None
+
+
+def test_cap_or_prune_keeps_the_best_out_of_bag_trees(federation):
+    schema, clients, _ = federation
+    c, other = clients[0], clients[3]
+    c.initialise(None)
+    foreign = other.grow(0, 6, None)
+    supplementary = c.refine(foreign, 1, None)
+    pool = foreign + supplementary
+    assert len(c.forest) == c.cfg["local_budget"] <= len(pool)
+    scores = {t.tree_id: c._score(t) for t in pool}
+    kept = {t.tree_id for t in c.forest}
+    assert min(scores[i] for i in kept) >= max(scores[t.tree_id] for t in pool if t.tree_id not in kept)
+    # a foreign tree is scored on every training patient, an own tree only on its out-of-bag patients
+    f = foreign[0]
+    assert scores[f.tree_id] == balanced_accuracy(c.y_train, c.predict(f.predict_proba(c.X_train)), c.classes)
+    own = supplementary[0]
+    oob = np.ones(len(c.y_train), bool)
+    oob[c._in_bag[own.tree_id]] = False
+    assert oob.sum() < len(c.y_train)
+    assert scores[own.tree_id] == balanced_accuracy(c.y_train[oob], c.predict(own.predict_proba(c.X_train[oob])),
+                                                    c.classes)
 
 
 def test_saved_forest_reloads(federation, tmp_path, limits):
-    schema, clients, server = federation
+    schema, clients, _ = federation
     c = clients[2]
-    trees, _ = server.receive(c.client_id, c.serialize(c.export(c.train_round(1), 1), 1, None), 1)
-    server.aggregate(trees)
-    server.save_forest(tmp_path / "forest.json", 1)
+    trees = c.grow(0, 4, 2.0)
+    save_forest(tmp_path / "forest.json", trees, schema, 1)
     loaded = load_forest(tmp_path / "forest.json", schema, limits)
     np.testing.assert_array_equal(forest_proba(loaded, c.X_val), forest_proba(trees, c.X_val))
 
@@ -192,15 +252,13 @@ def test_saved_forest_reloads(federation, tmp_path, limits):
 def test_dp_leaves_are_valid_distributions_and_structure_is_kept(federation):
     _, clients, _ = federation
     c = clients[1]
-    trees = c.export(c.train_round(1), 1)
-    noisy = c.privatize(trees, 2.0, 1)
+    trees, noisy = c.grow(1, 4, None), c.grow(1, 4, 2.0)
     for t, n in zip(trees, noisy):
         np.testing.assert_array_equal(t.threshold, n.threshold)
         np.testing.assert_array_equal(t.left, n.left)
         leaves = n.value[n.is_leaf]
         assert (leaves >= 0).all() and np.allclose(leaves.sum(axis=1), 1)
         assert not np.allclose(leaves, t.value[t.is_leaf])
-    assert c.privatize(trees, None, 1) is trees
 
 
 def test_laplace_mechanism_uses_b_equal_2c_over_epsilon():
@@ -221,8 +279,8 @@ def test_epsilon_schedule_and_accountant():
     assert all(2 <= e <= 3 for e in sched) and sched == epsilon_schedule((2.0, 3.0), 10, 42)
     assert epsilon_schedule((2.0, 3.0), 4, 42) == sched[:4]
     assert epsilon_schedule(3, 2, 42) == [3.0, 3.0] and epsilon_schedule(None, 2, 42) == [None, None]
-    acc = PrivacyAccountant(trees_per_round=25)
-    assert acc.spend(2.0) == 50.0 and acc.spend(None) == 0.0 and acc.total == 50.0
+    acc = PrivacyAccountant()
+    assert acc.spend(2.0, 25) == 50.0 and acc.spend(None, 25) == 0.0 and acc.total == 50.0
 
 
 # ── Metrics and convergence ─────────────────────────────────────────────────
@@ -242,19 +300,31 @@ def test_metrics_match_scikit_learn():
     assert pooled[MCC] == pytest.approx(matthews_corrcoef(np.r_[y, y2], np.r_[p, p2]))
 
 
-def test_prediction_change_is_normalised():
-    a = np.array([[1.0, 0.0], [0.5, 0.5]])
-    b = np.array([[0.0, 1.0], [0.5, 0.5]])
-    assert prediction_change_sum(a, b) == pytest.approx(1.0)  # one patient flipped fully, one unchanged
-    assert prediction_change_sum(a, a) == 0.0
+def test_log_loss_matches_scikit_learn():
+    rng = np.random.default_rng(3)
+    y = rng.integers(0, 2, 80)
+    p1 = rng.uniform(0.01, 0.99, 80)
+    proba = np.c_[1 - p1, p1]
+    assert log_loss(y, proba, np.array([0, 1])) == pytest.approx(sk_log_loss(y, proba))
 
 
-def test_combined_convergence_needs_both_tests_for_h_rounds():
-    conv = CombinedConvergence(eps_metric=0.001, eps_pred=0.005, patience=3)
-    first = conv.update(0.70, None)
-    assert first.delta_metric is None and not first.converged
-    seq = [(0.70, 0.001), (0.70, 0.001), (0.75, 0.001), (0.75, 0.001), (0.75, 0.01), (0.75, 0.001),
-           (0.7505, 0.002), (0.7505, 0.0)]
-    counters = [conv.update(m, dp).stable_rounds for m, dp in seq]
-    assert counters == [1, 2, 0, 1, 0, 1, 2, 3]
-    assert conv.stable_rounds >= conv.patience
+def test_local_convergence_needs_all_three_tests_for_p_rounds():
+    conv = LocalConvergence(tau_loss=0.05, tau_pred=0.05, tau_agree=0.15, patience=2)
+    same = np.zeros(20, int)
+    conv.initialise(0.50, same)
+    one_flip = same.copy()
+    one_flip[0] = 1  # 5 % of the patients
+    four_flips = same.copy()
+    four_flips[:4] = 1  # 20 %
+    steps = [(0.51, same, same),  # all pass -> q = 1
+             (0.52, same, same),  # q = 2 -> flag
+             (0.60, same, same),  # loss jumps 15 % -> reset
+             (0.60, one_flip, one_flip),  # 5 % changed, still within tau_pred -> q = 1
+             (0.60, one_flip, four_flips),  # 15 % disagreement with G -> q = 2 -> flag
+             (0.60, four_flips, four_flips),  # 15 % predictions changed -> reset
+             (0.60, four_flips, same)]  # stable but 20 % disagreement with G -> reset
+    results = [conv.update(loss, pred, g) for loss, pred, g in steps]
+    assert [r.patience for r in results] == [1, 2, 0, 1, 2, 0, 0]
+    assert [r.flag for r in results] == [False, True, False, False, True, False, False]
+    assert results[2].rel_loss_change == pytest.approx(0.08 / 0.52)
+    assert not results[6].agrees and results[6].disagreement == pytest.approx(0.2)

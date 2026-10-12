@@ -3,23 +3,17 @@
 import numpy as np
 import pandas as pd
 
-from .metrics import MCC, METRICS
+from .metrics import METRICS
 
 SERVER = "Global Server"
 ZKP_TIMES = ["ZKP Authentication Time (ms)", "ZKP Proof Generation Time (ms)", "ZKP Proof Verification Time (ms)"]
 TRANSFER_TIMES = ["Serialization Time (ms)", "Tree Validation Time (ms)"]
+LOCAL_COLUMNS = ["Client", "Trees in F_k", "Kept from G", "Loss L_k", "Rel. Loss Change", "Prediction Change",
+                 "G/F Disagreement", "q_k", "b_k"]
 
 
 def show(df):
     print(df.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
-
-
-def fmt(value, spec):
-    return "n/a" if value is None else format(value, spec)
-
-
-def short_metric(name):
-    return "MCC" if name == MCC else name
 
 
 def stats_table(df, column, unit, parties):
@@ -36,16 +30,21 @@ def header(cfg, clients, schema, dp_text, zkp_group):
     print("Clients (train/validation patients): "
           + ", ".join(f"{c.name} {len(c.y_train)}/{len(c.y_val)}" for c in clients)
           + f"; schema {schema.version} ({schema.n_features} features, id {schema.schema_id})")
-    print(f"Whole-tree sharing: every client trains {cfg['trees_per_client']} new trees per round and sends them "
-          f"as explicit nodes (feature, threshold, children, leaf class distribution; no feature/latent "
-          f"encoding); the server validates them and concatenates the valid trees into the global forest. "
-          f"Vectors = leaf class-distribution vectors in an update.")
-    print(f"{dp_text}; stop when Delta M <= {cfg['eps_metric']:g} ({short_metric(cfg['convergence_metric'])}) "
-          f"and Delta P <= {cfg['eps_pred']:g} for {cfg['patience']} consecutive rounds")
-    print(f"{SERVER} = the global model scored on all clients' validation patients together.")
+    print(f"Tree-level aggregation: F_k^(0) = {cfg['initial_trees']} trees; every round each client uploads its "
+          f"complete forest F_k^(t-1) as explicit trees (no feature/latent encoding), the server validates them and "
+          f"selects G^(t) = SelectTrees(U^(t), {cfg['aggregation_policy']}, B = {cfg['global_budget']}) without "
+          f"averaging, and each client builds F_k^(t) = CapOrPrune(G^(t) + H_k^(t), B_k = {cfg['local_budget']}) "
+          f"with {cfg['supplementary_trees']} supplementary trees. Vectors = leaf class-distribution vectors in an upload.")
+    print(f"{dp_text}")
+    print(f"Decentralized stopping: each client tests on its own validation patients relative loss change <= "
+          f"{cfg['tau_loss']:g}, prediction change <= {cfg['tau_pred']:g} and G/F disagreement <= "
+          f"{cfg['tau_agree']:g}; q_k counts consecutive passes and only b_k = [q_k >= {cfg['patience']}] is sent; "
+          f"the server stops when all b_k are True or at t = {cfg['max_rounds']}")
+    print(f"{SERVER} = the global model G^(t) scored on all clients' validation patients together (evaluation "
+          f"harness only; the server receives no metrics).")
 
 
-def round_report(rnd, zkp_rows, transfer_rows, round_metrics, server_line):
+def round_report(rnd, zkp_rows, transfer_rows, round_metrics, local_rows, server_line):
     print(f"\n{'=' * 30} Round {rnd} {'=' * 30}")
     if zkp_rows:
         rz = pd.DataFrame(zkp_rows).drop(columns="Round")
@@ -59,16 +58,37 @@ def round_report(rnd, zkp_rows, transfer_rows, round_metrics, server_line):
         print()
     print("Whole-tree transfer times (per client):")
     show(pd.DataFrame(transfer_rows)[["Client", *TRANSFER_TIMES]])
-    print(f"\nValidation metrics of the global model after round {rnd}:")
-    show(pd.DataFrame([{"Client": p, **m} for p, m in round_metrics.items()]))
+    if round_metrics:
+        print(f"\nValidation metrics of the global model G^({rnd}) after round {rnd}:")
+        show(pd.DataFrame([{"Client": p, **m} for p, m in round_metrics.items()]))
+    print(f"\nLocal three-part convergence test of F_k^({rnd}) (on each client's own validation patients; "
+          f"only b_k is sent):")
+    show(pd.DataFrame(local_rows)[LOCAL_COLUMNS])
     print(server_line)
 
 
 def run_summary(res, names):
     parties = names + [SERVER]
     n = res.rounds_run
-    print(f"\n=== Metrics averaged over all {n} rounds ===")
+    print(f"\n=== Global model G^(t): metrics averaged over all {n} rounds ===")
     show(res.metrics.groupby("Client", sort=False)[METRICS].mean().reindex(parties).reset_index())
+    print(f"\n=== Local models F_k^(t): metrics averaged over all {n} rounds ===")
+    show(res.local.groupby("Client", sort=False)[METRICS].mean().reindex(names).reset_index())
+    print(f"\n=== Final models after round {n} ===")
+    last_g = res.metrics[res.metrics.Round == n].set_index("Client").reindex(parties)
+    last_f = res.local[res.local.Round == n].set_index("Client").reindex(names)
+    show(pd.concat([last_g[METRICS].assign(Model="G").reset_index(),
+                    last_f[METRICS].assign(Model="F_k").reset_index()])[["Model", "Client", *METRICS]])
+
+    print(f"\n=== Decentralized convergence summary over {n} rounds ===")
+    g = res.local.groupby("Client", sort=False)
+    show(pd.DataFrame({"Client": names,
+                       "Loss Stable (rounds)": [int(g["Loss Stable"].sum()[c]) for c in names],
+                       "Prediction Stable (rounds)": [int(g["Prediction Stable"].sum()[c]) for c in names],
+                       "Agreement (rounds)": [int(g["Agreement"].sum()[c]) for c in names],
+                       "Max q_k": [int(g["q_k"].max()[c]) for c in names],
+                       "Flag True (rounds)": [int(g["b_k"].sum()[c]) for c in names],
+                       "Final b_k": [bool(g["b_k"].last()[c]) for c in names]}))
 
     print(f"\n=== ZKP time analysis over {n} rounds (min, max and mean per client) ===")
     for col in ZKP_TIMES:
@@ -92,9 +112,9 @@ def run_summary(res, names):
                           "Trees Accepted": [int(g["Trees Accepted"].sum()[c]) for c in names]})
     trees["Trees Rejected"] = trees["Trees Sent"] - trees["Trees Accepted"]
     show(trees)
-    print(f"Tree validation: {trees['Trees Accepted'].sum()}/{trees['Trees Sent'].sum()} trees accepted, "
+    print(f"Tree validation: {trees['Trees Accepted'].sum()}/{trees['Trees Sent'].sum()} uploaded trees accepted, "
           f"{trees['Trees Rejected'].sum()} rejected (schema, node references, split fields, leaf outputs, "
-          f"size and depth limits)")
+          f"size and depth limits, tree provenance)")
 
     print(f"\n=== Whole-tree transfer time analysis over {n} rounds (min, max and mean per client) ===")
     for col in TRANSFER_TIMES:
@@ -103,7 +123,7 @@ def run_summary(res, names):
 
 
 def dp_sweep_report(avg, last, rounds):
-    print(f"Accuracy averaged over the {rounds} rounds:")
+    print(f"Accuracy of G^(t) averaged over the {rounds} rounds:")
     show(avg)
-    print(f"Accuracy after round {rounds}:")
+    print(f"Accuracy of G^({rounds}) after round {rounds}:")
     show(last)

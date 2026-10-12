@@ -1,52 +1,44 @@
-# FedRF-Diff: Federated Random Forest with Whole-Tree Sharing
+# FedRF-Diff: Federated Random Forest with Tree-Level Aggregation
 
-A horizontal federated Random Forest for heart disease prediction across 4 hospitals. Each
-hospital trains a local Random Forest and sends the server its **complete, explicit decision trees**:
-feature, threshold, child references and leaf class distribution for every node. It shares no raw
-records, embeddings, latent codes or split histograms. The server validates the trees and concatenates
-the valid ones into the global forest. Training stops when a **combined convergence criterion** holds.
+A horizontal federated Random Forest for heart disease prediction across 4 hospitals. Clients exchange
+**complete Random Forests as explicit decision trees** (feature, threshold, children and leaf class
+distribution for every node). The server **never averages parameters** and **never computes the stopping
+condition**: every client runs a strict three-part convergence test on its own validation patients and sends
+only a boolean flag.
 
 ```bash
 pip install -r requirements.txt
-python -m fedrf_diff        # full run, CSVs and journal figures in outputs/run/
+python -m fedrf_diff        # full run, CSVs, forests and journal figures in outputs/run/
 python -m pytest            # unit and pipeline tests
 ```
 
-## Package
+## Algorithm
 
-| Module | Pipeline step |
-|---|---|
-| `fedrf_diff/data.py` | Hospital partition of the raw CSV, duplicates, missing values, stratified 80/20 split |
-| `fedrf_diff/alignment.py` | Step 1 schema agreement (feature order, classes, missing-value and split rules, schema id); Step 2 federated imputation and one-hot encoding |
-| `fedrf_diff/rf_kernel.py` | Step 3 local Random Forest; Step 4 explicit tree export (TreeMessage) and forest inference |
-| `fedrf_diff/privacy.py` | Laplace DP on every leaf vector, epsilon schedule, privacy accountant |
-| `fedrf_diff/zkp.py` | Modified Pedersen ZKP (pedersen2048 group, lambda = 2) binding each update to its sender, round and schema |
-| `fedrf_diff/client.py` | Hospital client: train, export, privatize, serialize, prove, score the global forest |
-| `fedrf_diff/server.py` | Authentication, Step 6 validation of every received tree, global forest update (concatenation, optional per-client cap), global metrics |
-| `fedrf_diff/convergence.py` | Section 4 combined convergence criterion |
-| `fedrf_diff/metrics.py` | Accuracy, precision, recall, specificity, F1, MCC, Cohen's kappa from confusion counts |
-| `fedrf_diff/pipeline.py` | The round loop and the accuracy-vs-DP-budget experiment |
-| `fedrf_diff/report.py`, `plotting.py` | Console tables; 600-dpi PNG + vector PDF figures |
-| `fedrf_diff/config.py` | Every hyperparameter |
+1. **Initialisation (t = 0)**: each client trains `F_k^(0)` (25 trees) on its private data. `G^(0)` is empty and `q_k = 0`.
+2. **Client → server**: at the start of round t each client uploads its complete forest `F_k^(t-1)` with its
+   schema metadata, signed with a Modified Pedersen ZKP. It sends no raw data and no latent encodings.
+3. **Tree-level aggregation**: the server validates every tree (schema, classes, node references, splits, leaves,
+   size and depth, provenance: a copy of a known tree must be identical, and only its creator may introduce a tree id).
+   It pools `U^(t) = ∪ T_k^(t-1)` and selects `G^(t) = SelectTrees(U^(t), A, B = 100)`. Policy `A = consensus`
+   is a round-robin over creating clients that prefers the trees kept by the most client forests, newest first.
+   The `client-balanced` and `newest` policies are also available.
+4. **Broadcast**: `G^(t)`, round t and the verified schema go to every client.
+5. **Local refinement**: each client grows a supplementary forest `H_k^(t)` (25 trees) and builds
+   `F_k^(t) = CapOrPrune(TreePool(G^(t), H_k^(t)), B_k = 50)`. This keeps the trees with the highest balanced
+   accuracy on the client's training patients that each tree did not train on: out-of-bag patients for its own
+   trees, all training patients for foreign trees. Validation data is never used for pruning.
+6. **Three-part convergence test** (each client, on its fixed validation split):
+   relative log-loss change `≤ τ_loss = 0.05`, share of changed predictions `≤ τ_pred = 0.05`, and share of
+   predictions where `F_k^(t)` and `G^(t)` disagree `≤ τ_agree = 0.15`. All pass → `q_k += 1`, otherwise `q_k = 0`.
+   The client sends only `b_k = [q_k ≥ P = 3]`.
+7. **Stopping**: the server tallies the flags. If every client reports True it stops with "all-client convergence";
+   at `t = R_max = 50` it stops with "maximum rounds reached". It returns `G^(t)` and every `F_k^(t)`.
 
-## Algorithm (one round t)
+Each newly grown tree gets Laplace DP on its leaf vectors (`b = 2C/ε`, `C = 1`, `ε ~ U[2, 3]` per round).
+All parameters are in `fedrf_diff/config.py`.
 
-1. **Local training**: each client trains `m = 25` new Random Forest trees on its own patients.
-2. **Explicit export + DP**: each tree becomes explicit nodes. Every leaf class-distribution vector `v`
-   (L1-clipped to `C = 1`) is released as `v + Lap(2C/ε)`, clamped and renormalised, with `ε ~ U[2, 3]` per round.
-3. **Transfer**: the update (trees + schema id, class order, client id, tree ids) is serialized and signed with
-   a Modified Pedersen proof. This proves knowledge of the opening of the client's registered commitment
-   `Y = g1^x · g2^r`, with a Fiat–Shamir challenge bound to SHA-256(update), the schema, the round and the client id.
-4. **Server validation**: the server verifies the proof, then checks the schema, class order, sender and round,
-   payload size, node ids, feature indices, finite thresholds, one rooted tree (no cycles or orphans), valid leaf
-   distributions, depth/size limits and replayed tree ids. Invalid trees are rejected individually.
-5. **Global forest**: `G_t = G_(t-1) ∪ {valid trees}`, with no parameter averaging. Prediction averages the class
-   probabilities of all trees and takes the argmax.
-6. **Evaluation**: every client scores `G_t` on its own validation patients and returns only its confusion counts
-   and its share of `ΔP_t`. The Global Server row uses the summed counts.
-7. **Combined convergence**: `ΔM_t = |M_t − M_(t−1)|` (M = MCC) and
-   `ΔP_t = (1/|V|) Σ_i ||P_t(i,·) − P_(t−1)(i,·)||₁ / 2`. A round passes when `ΔM_t ≤ 0.001` **and**
-   `ΔP_t ≤ 0.005`. The run stops after `H = 3` consecutive passing rounds or at `R = 50`.
+The per-round validation tables in the console are written by the **evaluation harness** for the paper.
+In the protocol itself, no validation metric reaches the server.
 
 ## Data
 
@@ -63,15 +55,16 @@ Statlog is Cleveland Clinic data, so it joins the Cleveland client, and its copi
 
 ## Outputs (`outputs/run/`)
 
-`validation_metrics.csv`, `zkp_times.csv`, `tree_transfer_times.csv` (serialization and server tree-validation times, accepted/rejected trees),
-`communication_computation_cost.csv`, `convergence.csv` (ΔM, ΔP, stable rounds, DP budget per round),
-`dp_budget_accuracy.csv`, and `global_forest.json` (the final global forest as explicit trees).
-The figures are `convergence`, `zkp_times`, `computation_cost`, `communication_cost` and `accuracy_vs_dp_budget`.
+`validation_metrics.csv` (G^(t) per client and Global Server), `local_convergence.csv` (the three tests, q_k, b_k
+and F_k^(t) metrics), `rounds.csv` (|U|, |G|, flags, decision, DP budget), `zkp_times.csv`, `tree_transfer_times.csv`,
+`communication_computation_cost.csv`, `dp_budget_accuracy.csv`, `console_output.txt`, and `forests/`
+(the returned G and every F_k as explicit trees). The figures are `convergence`, `zkp_times`, `computation_cost`,
+`communication_cost` and `accuracy_vs_dp_budget`.
 
 ## Privacy scope
 
 Each released leaf vector is ε-DP (pure DP). Leaves partition a tree's training sample, so a patient costs ε per
-tree, `m·ε` per round, and these add up over rounds (the per-patient bound is printed as "per patient").
+tree, `m·ε` for the m trees grown in a round, and these add up over rounds (re-sent trees are free post-processing) (the per-patient bound is printed as "per patient").
 Split features and thresholds are learned on the raw records and are **not** privatised, so whole-tree sharing
 is not an end-to-end DP release. The noise comes from a seeded numpy generator for reproducibility, not from a
 hardened DP sampler. The ZKP authenticates updates; it does not hide the trees from the server.

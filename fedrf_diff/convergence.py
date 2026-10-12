@@ -1,48 +1,59 @@
-"""Section 4 · combined convergence criterion.
+"""Step 6 · decentralized three-part convergence test, evaluated by every client on its own
+fixed validation patients D_k^val:
 
-    Delta M_t = |M_t - M_(t-1)|                                       metric stability
-    Delta P_t = (1 / |V|) sum_i ||P_t(i, .) - P_(t-1)(i, .)||_1 / 2     prediction stability
-    Converged_t = (Delta M_t <= eps_M) AND (Delta P_t <= eps_P)
+    1  loss stability          |L_k^(t) - L_k^(t-1)| / (|L_k^(t-1)| + eps)          <= tau_loss
+    2  prediction stability    (1/|D_val|) sum_i 1[y_k^(t)(x_i) != y_k^(t-1)(x_i)]   <= tau_pred
+    3  global/local agreement  (1/|D_val|) sum_i 1[y_Fk^(t)(x_i) != y_G^(t)(x_i)]    <= tau_agree
 
-The success counter grows when both tests pass and resets otherwise; training stops once it
-reaches H or after R rounds. Round 1 only initialises M_1 and P_1.
+All three pass: q_k = q_k + 1, otherwise q_k = 0. The client sends only b_k^(t) = [q_k >= P].
+L is the validation log-loss of the local model F_k; round 0 initialises L_k^(0) and y_k^(0)
+from the initial forest F_k^(0).
 """
 
 from dataclasses import dataclass
 
 import numpy as np
 
+PROBA_FLOOR = 1e-15
 
-def prediction_change_sum(proba, prev_proba):
-    """sum_i ||P_t(i, .) - P_(t-1)(i, .)||_1 / 2 over one client's validation patients."""
-    return float(0.5 * np.abs(proba - prev_proba).sum())
+
+def log_loss(y, proba, classes):
+    """Mean cross-entropy of the class probabilities (columns in `classes` order)."""
+    idx = np.searchsorted(classes, y)
+    return float(-np.mean(np.log(np.clip(proba[np.arange(len(y)), idx], PROBA_FLOOR, 1.0))))
 
 
 @dataclass(frozen=True)
-class RoundCheck:
-    delta_metric: float | None
-    delta_pred: float | None
-    metric_stable: bool
+class LocalCheck:
+    loss: float
+    rel_loss_change: float
+    pred_change: float
+    disagreement: float
+    loss_stable: bool
     pred_stable: bool
-    stable_rounds: int
-    converged: bool
+    agrees: bool
+    patience: int
+    flag: bool
 
 
-class CombinedConvergence:
-    def __init__(self, eps_metric, eps_pred, patience):
-        self.eps_metric, self.eps_pred, self.patience = eps_metric, eps_pred, patience
-        self.prev_metric = None
-        self.stable_rounds = 0
+class LocalConvergence:
+    """One client's patience counter q_k and its three tests."""
 
-    def update(self, metric, delta_pred):
-        """Record M_t and Delta P_t (None in the first round) and apply the combined test."""
-        if self.prev_metric is None:
-            self.prev_metric = metric
-            return RoundCheck(None, None, False, False, 0, False)
-        delta_metric = abs(metric - self.prev_metric)
-        self.prev_metric = metric
-        metric_stable = delta_metric <= self.eps_metric
-        pred_stable = delta_pred <= self.eps_pred
-        self.stable_rounds = self.stable_rounds + 1 if metric_stable and pred_stable else 0
-        return RoundCheck(delta_metric, delta_pred, metric_stable, pred_stable, self.stable_rounds,
-                          self.stable_rounds >= self.patience)
+    def __init__(self, tau_loss, tau_pred, tau_agree, patience, eps=1e-12):
+        self.tau_loss, self.tau_pred, self.tau_agree = tau_loss, tau_pred, tau_agree
+        self.patience, self.eps = patience, eps
+        self.q = 0
+        self.prev_loss = self.prev_pred = None
+
+    def initialise(self, loss, pred):
+        """Round 0: L_k^(0) and y_k^(0) of the initial local forest F_k^(0)."""
+        self.prev_loss, self.prev_pred = loss, pred
+
+    def update(self, loss, pred, global_pred):
+        rel = abs(loss - self.prev_loss) / (abs(self.prev_loss) + self.eps)
+        change = float(np.mean(pred != self.prev_pred))
+        disagree = 1.0 if global_pred is None else float(np.mean(pred != global_pred))  # no G^(t): no agreement
+        ok = (rel <= self.tau_loss, change <= self.tau_pred, disagree <= self.tau_agree)
+        self.q = self.q + 1 if all(ok) else 0
+        self.prev_loss, self.prev_pred = loss, pred
+        return LocalCheck(loss, rel, change, disagree, *ok, self.q, self.q >= self.patience)

@@ -12,7 +12,8 @@ renormalised so the server receives a valid distribution; post-processing costs 
 
 Accounting. A patient reaches one leaf per tree (the leaves partition the tree's training
 sample: parallel composition), so a tree costs epsilon per patient; the m trees a client sends
-in a round compose sequentially to m * epsilon, and rounds add up (basic composition).
+in a round compose sequentially to m * epsilon, and rounds add up (basic composition). Trees that
+are only re-sent (a client's kept trees, the global forest) are post-processing and free.
 
 Scope. Split features and thresholds are chosen on the raw records and are not privatised,
 so the shared trees as a whole are not an end-to-end DP release: the guarantee covers the leaf
@@ -61,14 +62,17 @@ def describe(spec):
 
 
 class PrivacyAccountant:
-    """Per-patient privacy loss of one client under basic composition."""
+    """Per-patient privacy loss of one client under basic composition.
 
-    def __init__(self, trees_per_round):
-        self.trees_per_round = trees_per_round
+    Only newly grown trees consume budget: re-sending a tree that was already released (in
+    F_k^(t-1) or G^(t)) is post-processing of a DP output and costs nothing.
+    """
+
+    def __init__(self):
         self.total = 0.0
 
-    def spend(self, epsilon):
-        """Record one round; returns the per-patient epsilon of that round."""
-        spent = 0.0 if epsilon is None else self.trees_per_round * epsilon
+    def spend(self, epsilon, n_trees):
+        """Record the release of n_trees new trees; returns their per-patient epsilon."""
+        spent = 0.0 if epsilon is None else n_trees * epsilon
         self.total += spent
         return spent

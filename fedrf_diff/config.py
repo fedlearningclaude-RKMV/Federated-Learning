@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-from .metrics import MCC
-
 ROOT = Path(__file__).resolve().parent.parent
 
 CONFIG = {
@@ -12,22 +10,24 @@ CONFIG = {
     "out_dir": ROOT / "outputs/run",
     "seed": 42,
     "val_size": 0.20,  # validation share of every hospital (stratified)
-    # Step 3 · local Random Forest: every client trains m new trees per round
-    "trees_per_client": 25,  # m
+    # Steps 1 and 5 · local Random Forests
+    "initial_trees": 25,  # trees in F_k^(0)
+    "supplementary_trees": 25,  # trees in H_k^(t), grown every round
     "rf_params": {"max_features": "sqrt", "min_samples_leaf": 2},  # + balanced class weights
-    # Step 6 · server-side validation limits for received trees
+    "local_budget": 50,  # B_k, CapOrPrune keeps at most this many trees in F_k^(t)
+    # Step 3 · structural validation limits and tree-level aggregation
     "max_payload_bytes": 16 * 1024 * 1024,
     "max_trees_per_update": 500,
     "max_nodes_per_tree": 20_000,
     "max_tree_depth": 64,
-    # Step 7 · global forest policy: keep every valid tree (None) or only the newest N trees per client
-    "max_trees_per_client": None,
-    # Section 4 · combined convergence criterion
-    "max_rounds": 50,  # R
-    "convergence_metric": MCC,  # M_t, fixed before training
-    "eps_metric": 0.001,  # eps_M
-    "eps_pred": 0.005,  # eps_P
-    "patience": 3,  # H consecutive rounds
+    "aggregation_policy": "consensus",  # A: "consensus", "client-balanced" or "newest" (server.select_trees)
+    "global_budget": 100,  # B, trees in G^(t)
+    # Step 6 · decentralized three-part convergence test (each client, own validation split)
+    "max_rounds": 50,  # R_max
+    "tau_loss": 0.05,  # relative change of the validation log-loss
+    "tau_pred": 0.05,  # share of validation predictions that changed since the last round
+    "tau_agree": 0.15,  # share of validation predictions where F_k^(t) and G^(t) disagree
+    "patience": 3,  # P consecutive passing rounds
     # Laplace DP on the shared leaf vectors (privacy.py)
     "dp_epsilon": (2.0, 3.0),  # epsilon per round: a number, a (low, high) uniform range, or None for no DP
     "dp_clip": 1.0,  # C, L1 clip norm of every leaf vector

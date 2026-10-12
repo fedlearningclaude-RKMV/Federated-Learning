@@ -14,8 +14,9 @@ from fedrf_diff.server import Limits  # noqa: E402
 @pytest.fixture
 def small_cfg(tmp_path):
     """The real data with a short, cheap federation."""
-    return dict(CONFIG, out_dir=tmp_path / "run", clients_dir=tmp_path / "clients", trees_per_client=4,
-                max_rounds=3, dp_sweep=[2.0, (2.0, 3.0), None], make_figures=False)
+    return dict(CONFIG, out_dir=tmp_path / "run", clients_dir=tmp_path / "clients", initial_trees=4,
+                supplementary_trees=4, local_budget=6, global_budget=10, max_rounds=3,
+                dp_sweep=[2.0, (2.0, 3.0), None], make_figures=False)
 
 
 @pytest.fixture

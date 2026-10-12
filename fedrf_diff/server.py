@@ -1,11 +1,18 @@
-"""Federated server: authentication, Step 6 tree validation and the global forest (Steps 6-9).
+"""Federated server: authentication, structural validation, tree-level aggregation, stopping.
 
-The clients send their whole trees as explicit node structures, so there is nothing to decode:
-the server only parses the JSON transport format and checks every received tree before it
-joins the global forest (schema id and version, class order, sender and round, payload size,
-unique dense node ids, valid feature indices and finite thresholds, child references that form
-one rooted tree, leaf outputs that are valid class distributions, node count and depth limits,
-replayed tree ids). A malformed tree is rejected on its own; a malformed update as a whole.
+Step 3 · every client uploads its complete forest F_k^(t-1) as explicit node structures, so
+there is nothing to decode: the server parses the JSON transport format and checks every tree
+(schema id and version, class order, sender and round, payload size, unique dense node ids,
+valid feature indices and finite thresholds, child references that form one rooted tree, leaf
+outputs that are valid class distributions, node count and depth limits). A tree keeps the id
+and the creator it was born with; a copy of a known tree must be identical to the original and
+only the creator may introduce a new tree id. A malformed tree is rejected on its own, a
+malformed upload as a whole.
+
+The valid trees form the candidate pool U^(t) = union of T_k^(t-1), and the aggregation policy
+A selects at most B of them: G^(t) = SelectTrees(U^(t), A, B). Tree parameters are never
+averaged. Step 7 · the server never sees validation metrics: it only tallies the clients'
+boolean convergence flags.
 """
 
 import hashlib
@@ -17,7 +24,6 @@ from dataclasses import dataclass
 import numpy as np
 
 from . import zkp
-from .metrics import metrics_from_counts
 from .rf_kernel import LEAF, Tree, tree_to_message
 
 INTERNAL_KEYS = {"node_id", "feature", "threshold", "left_child", "right_child"}
@@ -60,8 +66,8 @@ def _reject_constant(token):
     raise InvalidUpdate(f"non-finite number {token} in payload")
 
 
-def check_update(payload, schema, limits, client_id, rnd):
-    """Check one received update; returns (valid trees, [(tree_id, reason), ...] for rejected trees)."""
+def check_update(payload, schema, limits, client_id, rnd, creators):
+    """Check one uploaded forest; returns ([(tree, digest), ...] valid, [(tree_id, reason), ...] rejected)."""
     if len(payload) > limits.max_payload_bytes:
         raise InvalidUpdate(f"payload of {len(payload)} bytes exceeds {limits.max_payload_bytes}")
     try:
@@ -79,26 +85,31 @@ def check_update(payload, schema, limits, client_id, rnd):
     trees, rejected = [], []
     for msg in update["trees"]:
         try:
-            trees.append(validate_tree(msg, schema, limits, client_id))
+            trees.append((validate_tree(msg, schema, limits, creators), tree_digest(msg)))
         except InvalidTree as e:
             tree_id = msg.get("tree_id") if isinstance(msg, dict) else None
             rejected.append((str(tree_id), str(e)))
     return trees, rejected
 
 
-def validate_tree(msg, schema, limits, client_id):
-    """Check one TreeMessage and rebuild its node arrays."""
+def tree_digest(msg):
+    return hashlib.sha256(json.dumps(msg, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def validate_tree(msg, schema, limits, creators):
+    """Check one TreeMessage (created by one of `creators`) and rebuild its node arrays."""
     if not isinstance(msg, dict) or set(msg) != TREE_KEYS:
         raise InvalidTree("tree fields do not match the protocol")
     if msg["schema_version"] != schema.version or msg["task"] != "classification":
         raise InvalidTree("schema version or task mismatch")
     if msg["classes"] != list(schema.classes):
         raise InvalidTree("class order mismatch")
-    if msg["client_id"] != client_id:
-        raise InvalidTree("tree claims another client")
+    client_id = msg["client_id"]
+    if client_id not in creators:
+        raise InvalidTree("tree created by an unknown client")
     tree_id = msg["tree_id"]
     if not isinstance(tree_id, str) or not tree_id.startswith(f"{client_id}_"):
-        raise InvalidTree("tree id must start with the sender's client id")
+        raise InvalidTree("tree id must start with its creator's client id")
     nodes = msg["nodes"]
     if not isinstance(nodes, list) or not 1 <= len(nodes) <= limits.max_nodes:
         raise InvalidTree(f"a tree needs 1 to {limits.max_nodes} nodes")
@@ -157,23 +168,59 @@ def validate_tree(msg, schema, limits, client_id):
                 left=left, right=right, value=value)
 
 
+def save_forest(path, trees, schema, rnd):
+    saved = {"schema_id": schema.schema_id, "schema_version": schema.version, "features": list(schema.features),
+             "classes": list(schema.classes), "round": rnd, "trees": [tree_to_message(t, schema) for t in trees]}
+    path.write_text(json.dumps(saved, separators=(",", ":")))
+
+
 def load_forest(path, schema, limits):
-    """Reload a saved global forest, validating every tree again."""
+    """Reload a saved forest, validating every tree again."""
     saved = json.loads(path.read_text())
     if saved["schema_id"] != schema.schema_id:
         raise InvalidUpdate("saved forest was built under another schema")
-    return [validate_tree(msg, schema, limits, msg["client_id"]) for msg in saved["trees"]]
+    return [validate_tree(msg, schema, limits, {msg["client_id"]}) for msg in saved["trees"]]
+
+
+def select_trees(pool, policy, budget, votes=None):
+    """SelectTrees(U, A, B) for the predeclared policy A.
+
+    consensus        round-robin over the creating clients; inside each client's queue the trees
+                     kept by the most client forests come first (a tree every client retained
+                     after its own CapOrPrune is a tree that serves every site), then the newest
+    client-balanced  round-robin over the creating clients, newest trees first
+    newest           the B newest trees regardless of creator
+    Round-robin over creators keeps any one client (however large) from filling the budget.
+    """
+    newest_first = sorted(pool, key=lambda t: t.tree_id, reverse=True)  # ids carry zero-padded round / index
+    if policy == "newest":
+        return newest_first[:budget]
+    if policy == "consensus":
+        votes = votes or {}
+        newest_first = sorted(newest_first, key=lambda t: votes.get(t.tree_id, 0), reverse=True)  # stable sort
+    elif policy != "client-balanced":
+        raise ValueError(f"unknown aggregation policy {policy!r}")
+    queues = {}
+    for t in newest_first:
+        queues.setdefault(t.client_id, []).append(t)
+    selected, order = [], sorted(queues)
+    while len(selected) < budget and any(queues.values()):
+        for creator in order:
+            if queues[creator] and len(selected) < budget:
+                selected.append(queues[creator].pop(0))
+    return selected
 
 
 
 class FederatedServer:
-    def __init__(self, schema, limits, zkp_lambda, max_trees_per_client=None):
+    def __init__(self, schema, limits, zkp_lambda, policy, budget):
         self.schema, self.limits = schema, limits
         self.zkp_lambda = zkp_lambda
-        self.max_trees_per_client = max_trees_per_client
+        self.policy, self.budget = policy, budget
         self.public_keys = {}
-        self.forest = {}  # tree_id -> Tree, in acceptance order
-        self.tree_size = {}  # tree_id -> bytes of its TreeMessage (what a client downloads)
+        self.known = {}  # tree_id -> digest of the first accepted copy
+        self.global_forest = []  # G^(t)
+        self.tree_size = {}  # tree_id -> bytes of its TreeMessage
 
     def register(self, client_id, commitment):
         if not zkp.in_group(commitment):
@@ -187,63 +234,50 @@ class FederatedServer:
         return zkp.verify(self.public_keys[client_id], hashlib.sha256(payload).digest(), context, proof,
                           self.zkp_lambda)
 
-    def receive(self, client_id, payload, rnd):
-        """Step 6 · valid trees of one authenticated update and the rejected ones with reasons."""
+    def receive(self, client_id, payload, rnd, creators):
+        """Step 3 · structural validation of one uploaded forest F_k^(t-1)."""
         try:
-            trees, rejected = check_update(payload, self.schema, self.limits, client_id, rnd)
+            checked, rejected = check_update(payload, self.schema, self.limits, client_id, rnd, creators)
         except InvalidUpdate as e:
             return [], [("<update>", str(e))]
         valid, seen = [], set()
-        for t in trees:
-            if t.tree_id in self.forest or t.tree_id in seen:
-                rejected.append((t.tree_id, "replayed tree id"))
+        for tree, digest in checked:
+            known = self.known.get(tree.tree_id)
+            if tree.tree_id in seen:
+                rejected.append((tree.tree_id, "duplicate tree id in one forest"))
+            elif known is None and tree.client_id != client_id:
+                rejected.append((tree.tree_id, "new tree id claimed for another client"))
+            elif known is not None and known != digest:
+                rejected.append((tree.tree_id, "altered copy of a known tree"))
             else:
-                seen.add(t.tree_id)
-                valid.append(t)
+                seen.add(tree.tree_id)
+                self.known.setdefault(tree.tree_id, digest)
+                valid.append(tree)
         return valid, rejected
 
-    def aggregate(self, trees):
-        """Step 7 · G_t = G_(t-1) plus the valid trees of this round (no parameter averaging).
-
-        With a per-client cap only the newest trees of every client are kept. Returns the ids
-        added and removed, which is what the clients need to update their copy of G_t.
-        """
-        previous = set(self.forest)
-        for t in trees:
-            self.forest[t.tree_id] = t
-        if self.max_trees_per_client is not None:
-            by_client = {}
-            for tree_id, t in self.forest.items():
-                by_client.setdefault(t.client_id, []).append(tree_id)
-            for ids in by_client.values():
-                for tree_id in ids[:-self.max_trees_per_client]:
-                    del self.forest[tree_id]
-        added = [t for t in trees if t.tree_id in self.forest]
-        removed = [tree_id for tree_id in previous if tree_id not in self.forest]
-        for tree_id in removed:
-            del self.tree_size[tree_id]
-        for t in added:
-            self.tree_size[t.tree_id] = len(json.dumps(tree_to_message(t, self.schema), separators=(",", ":")))
-        return added, removed
+    def aggregate(self, valid_forests):
+        """Step 3 · G^(t) = SelectTrees(U^(t), A, B) with U^(t) the union of the valid client trees."""
+        pool, votes = {}, {}
+        for trees in valid_forests:
+            for t in trees:
+                pool.setdefault(t.tree_id, t)
+                votes[t.tree_id] = votes.get(t.tree_id, 0) + 1  # in how many client forests the tree sits
+        self.global_forest = select_trees(list(pool.values()), self.policy, self.budget, votes)
+        for t in self.global_forest:
+            if t.tree_id not in self.tree_size:
+                self.tree_size[t.tree_id] = len(json.dumps(tree_to_message(t, self.schema), separators=(",", ":")))
+        return len(pool)
 
     @property
-    def trees(self):
-        return list(self.forest.values())
+    def global_bytes(self):
+        """Step 4 · size of the broadcast G^(t)."""
+        return sum(self.tree_size[t.tree_id] for t in self.global_forest)
 
     @staticmethod
-    def global_metrics(reports):
-        """Global Server row: metrics of the summed confusion counts of all validation patients."""
-        return metrics_from_counts(np.sum([r.counts for r in reports], axis=0))
-
-    @staticmethod
-    def prediction_change(reports):
-        """Delta P_t over V = all clients' validation patients, from the clients' partial sums."""
-        if any(r.pred_change_sum is None for r in reports):
-            return None
-        return sum(r.pred_change_sum for r in reports) / sum(r.n for r in reports)
-
-    def save_forest(self, path, rnd):
-        saved = {"schema_id": self.schema.schema_id, "schema_version": self.schema.version,
-                 "features": list(self.schema.features), "classes": list(self.schema.classes), "round": rnd,
-                 "trees": [tree_to_message(t, self.schema) for t in self.trees]}
-        path.write_text(json.dumps(saved, separators=(",", ":")))
+    def stopping_decision(flags, rnd, max_rounds):
+        """Step 7 · the server sees only the boolean flags b_k^(t)."""
+        if all(flags):
+            return "all-client convergence"
+        if rnd >= max_rounds:
+            return "maximum rounds reached"
+        return None
