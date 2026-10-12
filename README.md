@@ -23,7 +23,11 @@ python -m pytest            # unit and pipeline tests
    is a round-robin over creating clients that prefers the trees kept by the most client forests, newest first.
    The `client-balanced` and `newest` policies are also available.
 4. **Broadcast**: `G^(t)`, round t and the verified schema go to every client.
-5. **Local refinement**: each client grows a supplementary forest `H_k^(t)` (25 trees) and builds
+5. **Local refinement**: each client first selects its Random Forest hyperparameters with a stratified 5-fold
+   grid search on its own training patients (`max_features` × `min_samples_leaf`, 12 settings, balanced accuracy).
+   The cross-validation forests are never shared, so they cost no DP budget. This local model selection is the bulk of
+   the round time, about 30 s per round on a 4-core machine; adjust `local_tuning` in `config.py` to change it.
+   The client then grows a supplementary forest `H_k^(t)` (25 trees) and builds
    `F_k^(t) = CapOrPrune(TreePool(G^(t), H_k^(t)), B_k = 50)`. This keeps the trees with the highest balanced
    accuracy on the client's training patients that each tree did not train on: out-of-bag patients for its own
    trees, all training patients for foreign trees. Validation data is never used for pruning.
@@ -55,7 +59,7 @@ Statlog is Cleveland Clinic data, so it joins the Cleveland client, and its copi
 
 ## Outputs (`outputs/run/`)
 
-`validation_metrics.csv` (G^(t) per client and Global Server), `local_convergence.csv` (the three tests, q_k, b_k
+`validation_metrics.csv` (G^(t) per client and Global Server), `local_tuning.csv` (selected hyperparameters, CV score and tuning time), `local_convergence.csv` (the three tests, q_k, b_k
 and F_k^(t) metrics), `rounds.csv` (|U|, |G|, flags, decision, DP budget), `zkp_times.csv`, `tree_transfer_times.csv`,
 `communication_computation_cost.csv`, `dp_budget_accuracy.csv`, `console_output.txt`, and `forests/`
 (the returned G and every F_k as explicit trees). The figures are `convergence`, `zkp_times`, `computation_cost`,

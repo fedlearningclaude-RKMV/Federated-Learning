@@ -39,6 +39,7 @@ class RunResult:
     status: str
     metrics: pd.DataFrame  # G^(t) on every client's validation patients + Global Server (harness only)
     local: pd.DataFrame  # three-part test and F_k^(t) metrics per client and round
+    tuning: pd.DataFrame  # local model selection per client and round
     zkp: pd.DataFrame
     transfer: pd.DataFrame
     cost: pd.DataFrame
@@ -104,6 +105,7 @@ def run_federation(cfg, dp_spec, rounds, with_zkp=True, verbose=True, stop_early
               f"G^(0) is empty; q_k = 0 for every client.")
 
     zkp_rows, transfer_rows, cost_rows, metric_rows, local_rows, round_rows = [], [], [], [], [], []
+    tuning_rows = []
     status, rnd = MAX_ROUNDS, 0
     for rnd in range(1, rounds + 1):
         t_round = time.perf_counter()
@@ -145,6 +147,12 @@ def run_federation(cfg, dp_spec, rounds, with_zkp=True, verbose=True, stop_early
             c.refine(global_forest, rnd, epsilon)
             up[c.cid]["refine"] = time.perf_counter() - t0
             up[c.cid]["kept_global"] = sum(t.tree_id in global_ids for t in c.forest)
+            if c.tuning is not None:
+                params, cv_score, fits = c.tuning
+                tuning_rows.append({"Round": rnd, "Client": c.name,
+                                    **{f"Best {k}": str(params[k]) for k in cfg["local_tuning"]["grid"]},
+                                    "CV Balanced Accuracy": cv_score, "CV Fits": fits,
+                                    "Tuning Time (ms)": ms(c.tuning_seconds)})
         eps_patient = accountant.spend(epsilon, cfg["supplementary_trees"])
 
         # Step 6 · decentralized three-part convergence test; only b_k leaves the client
@@ -191,11 +199,13 @@ def run_federation(cfg, dp_spec, rounds, with_zkp=True, verbose=True, stop_early
             cost_rows.append({"Round": rnd, "Client": c.name,
                               "Uplink (KB)": (len(u["payload"]) + proof_bytes + FLAG_BYTES) / 1024,
                               "Downlink (KB)": global_kb, "Local Refinement Time (ms)": ms(u["refine"]),
+                              "Local Tuning Time (ms)": ms(c.tuning_seconds) if c.tuning else 0.0,
                               "Convergence Check Time (ms)": ms(u["conv"]), "Aggregation Time (ms)": np.nan,
                               "Global Forest (KB)": np.nan})
         round_costs = pd.DataFrame(cost_rows[-len(clients):])
         cost_rows.append({"Round": rnd, "Client": SERVER, "Uplink (KB)": round_costs["Uplink (KB)"].sum(),
                           "Downlink (KB)": round_costs["Downlink (KB)"].sum(), "Local Refinement Time (ms)": np.nan,
+                          "Local Tuning Time (ms)": np.nan,
                           "Convergence Check Time (ms)": np.nan, "Aggregation Time (ms)": ms(t_agg),
                           "Global Forest (KB)": global_kb})
         n_sent = sum(u["n_trees"] for u in up.values())
@@ -217,14 +227,16 @@ def run_federation(cfg, dp_spec, rounds, with_zkp=True, verbose=True, stop_early
                     f"{cfg['aggregation_policy']}) | convergence flags {sum(flags)}/{len(clients)} True | "
                     f"decision: {decision or 'continue'} | round time {round_time:.1f} s | {dp}")
             report.round_report(rnd, zkp_rows[-len(clients):] if with_zkp else [], transfer_rows[-len(clients):],
-                                round_metrics, local_rows[-len(clients):], line)
+                                round_metrics, local_rows[-len(clients):], line,
+                                tuning_rows[-len(clients):] if tuning_rows else [])
 
         if decision is not None:
             status = decision
             if decision == CONVERGED and stop_early:
                 break
 
-    return RunResult(rnd, status, pd.DataFrame(metric_rows), pd.DataFrame(local_rows), pd.DataFrame(zkp_rows),
+    return RunResult(rnd, status, pd.DataFrame(metric_rows), pd.DataFrame(local_rows), pd.DataFrame(tuning_rows),
+                     pd.DataFrame(zkp_rows),
                      pd.DataFrame(transfer_rows), pd.DataFrame(cost_rows), pd.DataFrame(round_rows),
                      schedule[:rnd + 1], accountant.total, server, clients)
 
@@ -277,6 +289,7 @@ def main(cfg=CONFIG):
 
     res.metrics.to_csv(out_dir / "validation_metrics.csv", index=False)
     res.local.to_csv(out_dir / "local_convergence.csv", index=False)
+    res.tuning.to_csv(out_dir / "local_tuning.csv", index=False)
     res.zkp.to_csv(out_dir / "zkp_times.csv", index=False)
     res.transfer.to_csv(out_dir / "tree_transfer_times.csv", index=False)
     res.cost.to_csv(out_dir / "communication_computation_cost.csv", index=False)

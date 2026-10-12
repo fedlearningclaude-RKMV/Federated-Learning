@@ -172,7 +172,7 @@ def fig_zkp(out_dir, zkp, names):
 def fig_computation(out_dir, res, names):
     cost, transfer, zkp = res.cost, res.transfer, res.zkp
     fig, axes = plt.subplots(2, 3, figsize=(10.4, 5.8))
-    panels = [(cost, "Local Refinement Time (ms)", "Local refinement H_k + CapOrPrune (client)"),
+    panels = [(cost, "Local Refinement Time (ms)", "Local refinement: tuning + H_k + CapOrPrune"),
               (transfer, "Serialization Time (ms)", "Forest serialization (client)"),
               (transfer, "Tree Validation Time (ms)", "Structural validation (server)"),
               (cost, "Convergence Check Time (ms)", "Three-part convergence test (client)")]
@@ -192,13 +192,15 @@ def fig_computation(out_dir, res, names):
     _panel(ax, "e")
 
     ax = axes.flat[5]
-    parts = {"Refinement": cost.groupby("Client")["Local Refinement Time (ms)"].mean(),
+    tuning = cost.groupby("Client")["Local Tuning Time (ms)"].mean()
+    parts = {"Local tuning (CV)": tuning,
+             "Grow H_k + CapOrPrune": cost.groupby("Client")["Local Refinement Time (ms)"].mean() - tuning,
              "Serialization": transfer.groupby("Client")["Serialization Time (ms)"].mean(),
              "ZKP proof": zkp.groupby("Client")["ZKP Proof Generation Time (ms)"].mean(),
              "Convergence test": cost.groupby("Client")["Convergence Check Time (ms)"].mean()}
     y = np.arange(len(names))
     left = np.zeros(len(names))
-    for (label, v), color in zip(parts.items(), ["#184f95", "#2a78d6", "#86b6ef", "#c3c2b7"]):
+    for (label, v), color in zip(parts.items(), ["#0d366b", "#184f95", "#2a78d6", "#86b6ef", "#c3c2b7"]):
         vals = v.reindex(names).to_numpy()
         ax.barh(y, vals, 0.6, left=left, color=color, edgecolor=SURFACE, linewidth=1, label=label)
         left += vals

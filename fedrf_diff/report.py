@@ -35,6 +35,14 @@ def header(cfg, clients, schema, dp_text, zkp_group):
           f"selects G^(t) = SelectTrees(U^(t), {cfg['aggregation_policy']}, B = {cfg['global_budget']}) without "
           f"averaging, and each client builds F_k^(t) = CapOrPrune(G^(t) + H_k^(t), B_k = {cfg['local_budget']}) "
           f"with {cfg['supplementary_trees']} supplementary trees. Vectors = leaf class-distribution vectors in an upload.")
+    tuning = cfg["local_tuning"]
+    if tuning:
+        n_settings = 1
+        for values in tuning["grid"].values():
+            n_settings *= len(values)
+        print(f"Local model selection: before growing F_k^(0) and every H_k^(t) each client runs a {tuning['folds']}-fold "
+              f"stratified grid search ({n_settings} settings of {', '.join(tuning['grid'])}; {tuning['cv_trees']} trees "
+              f"per CV forest; balanced accuracy) on its training patients; CV forests are never shared.")
     print(f"{dp_text}")
     print(f"Decentralized stopping: each client tests on its own validation patients relative loss change <= "
           f"{cfg['tau_loss']:g}, prediction change <= {cfg['tau_pred']:g} and G/F disagreement <= "
@@ -44,7 +52,7 @@ def header(cfg, clients, schema, dp_text, zkp_group):
           f"harness only; the server receives no metrics).")
 
 
-def round_report(rnd, zkp_rows, transfer_rows, round_metrics, local_rows, server_line):
+def round_report(rnd, zkp_rows, transfer_rows, round_metrics, local_rows, server_line, tuning_rows=()):
     print(f"\n{'=' * 30} Round {rnd} {'=' * 30}")
     if zkp_rows:
         rz = pd.DataFrame(zkp_rows).drop(columns="Round")
@@ -55,6 +63,10 @@ def round_report(rnd, zkp_rows, transfer_rows, round_metrics, local_rows, server
             status = ("Successful (proof valid, update accepted)" if r["Proof"] == "Valid"
                       else "Failed (proof invalid, update rejected)")
             print(f"  {r['Client']:<24}: Authentication {status}")
+        print()
+    if tuning_rows:
+        print("Local model selection before growing H_k (stratified k-fold CV on each client's training patients):")
+        show(pd.DataFrame(tuning_rows).drop(columns="Round"))
         print()
     print("Whole-tree transfer times (per client):")
     show(pd.DataFrame(transfer_rows)[["Client", *TRANSFER_TIMES]])
@@ -115,6 +127,11 @@ def run_summary(res, names):
     print(f"Tree validation: {trees['Trees Accepted'].sum()}/{trees['Trees Sent'].sum()} uploaded trees accepted, "
           f"{trees['Trees Rejected'].sum()} rejected (schema, node references, split fields, leaf outputs, "
           f"size and depth limits, tree provenance)")
+
+    if not res.tuning.empty:
+        print(f"\n=== Local tuning time analysis over {n} rounds (min, max and mean per client) ===")
+        print("Tuning Time (ms):")
+        stats_table(res.tuning, "Tuning Time (ms)", "ms", names)
 
     print(f"\n=== Whole-tree transfer time analysis over {n} rounds (min, max and mean per client) ===")
     for col in TRANSFER_TIMES:

@@ -15,6 +15,14 @@ CONFIG = {
     "supplementary_trees": 25,  # trees in H_k^(t), grown every round
     "rf_params": {"max_features": "sqrt", "min_samples_leaf": 2},  # + balanced class weights
     "local_budget": 50,  # B_k, CapOrPrune keeps at most this many trees in F_k^(t)
+    # Steps 1 and 5 · local model selection before growing F_k^(0) / H_k^(t): stratified k-fold grid search
+    # on the training patients (never shared, no DP cost). This is the bulk of the round time; grow or
+    # shrink the grid, folds or cv_trees to change it, or set "local_tuning": None to skip tuning.
+    "local_tuning": {
+        "grid": {"max_features": ["sqrt", 0.5, None], "min_samples_leaf": [1, 2, 4, 8]},
+        "folds": 5,
+        "cv_trees": 60,
+    },
     # Step 3 · structural validation limits and tree-level aggregation
     "max_payload_bytes": 16 * 1024 * 1024,
     "max_trees_per_update": 500,

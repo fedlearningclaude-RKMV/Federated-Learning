@@ -15,6 +15,7 @@ used for pruning, so the convergence test stays an honest held-out check.
 
 import hashlib
 import json
+import time
 
 import numpy as np
 
@@ -24,9 +25,10 @@ from .convergence import LocalConvergence, log_loss
 from .data import TARGET
 from .metrics import confusion_counts
 from .privacy import privatize_leaves
-from .rf_kernel import export_tree, train_local_forest, tree_to_message
+from .rf_kernel import export_tree, train_local_forest, tree_to_message, tune_forest_params
 
 FLAG_BYTES = 1  # b_k^(t) is the only thing a client reports about its validation data
+_TUNING_CACHE = {}  # tuning is a deterministic function of the training data and seed; the DP sweep reuses it
 
 
 def balanced_accuracy(y, pred, classes):
@@ -51,6 +53,9 @@ class HospitalClient:
         self._in_bag = {}  # tree_id -> training rows a tree grown here was fitted on
         self._val_proba = {}  # tree_id -> class probabilities on the validation patients (cache)
         self._train_score = {}  # tree_id -> CapOrPrune score (cache)
+        self.rf_params = dict(cfg["rf_params"])  # replaced by the locally tuned setting every round
+        self.tuning = None  # (best parameters, CV balanced accuracy, number of CV fits) of the last round
+        self.tuning_seconds = 0.0
 
     def imputation_stats(self):
         return imputation_stats(self.train_raw)
@@ -65,10 +70,27 @@ class HospitalClient:
         return np.random.SeedSequence([self.cfg["seed"], rnd, self.cid, stream])
 
     # Steps 1 and 5 · a local forest of explicit trees, Laplace DP on every leaf vector
+    def tune(self, rnd):
+        """Local hyperparameter selection by stratified k-fold CV on the training patients only."""
+        tuning = self.cfg["local_tuning"]
+        if not tuning:
+            return
+        seed = int(self._seed(rnd, 2).generate_state(1)[0])
+        key = (hashlib.sha256(self.X_train.tobytes() + self.y_train.tobytes()).hexdigest(), seed,
+               repr(tuning), repr(self.cfg["rf_params"]))
+        t0 = time.perf_counter()
+        if key not in _TUNING_CACHE:
+            _TUNING_CACHE[key] = (tune_forest_params(self.X_train, self.y_train, tuning["grid"], tuning["folds"],
+                                                     tuning["cv_trees"], seed, self.cfg["rf_params"]),
+                                  time.perf_counter() - t0)
+        self.tuning, self.tuning_seconds = _TUNING_CACHE[key]
+        self.rf_params = self.tuning[0]
+
     def grow(self, rnd, n_trees, epsilon):
-        """F_k^(0) at round 0, the supplementary forest H_k^(t) afterwards."""
+        """F_k^(0) at round 0, the supplementary forest H_k^(t) afterwards (after local tuning)."""
+        self.tune(rnd)
         rf = train_local_forest(self.X_train, self.y_train, n_trees, int(self._seed(rnd, 0).generate_state(1)[0]),
-                                self.cfg["rf_params"])
+                                self.rf_params)
         rng = np.random.default_rng(self._seed(rnd, 1))
         trees = []
         for j, (est, rows) in enumerate(zip(rf.estimators_, rf.estimators_samples_)):

@@ -328,3 +328,16 @@ def test_local_convergence_needs_all_three_tests_for_p_rounds():
     assert [r.flag for r in results] == [False, True, False, False, True, False, False]
     assert results[2].rel_loss_change == pytest.approx(0.08 / 0.52)
     assert not results[6].agrees and results[6].disagreement == pytest.approx(0.2)
+
+
+def test_local_tuning_picks_a_grid_setting_on_training_data(federation):
+    _, clients, _ = federation
+    c = clients[0]
+    c.cfg = dict(c.cfg, local_tuning={"grid": {"min_samples_leaf": [1, 8]}, "folds": 3, "cv_trees": 5})
+    trees = c.grow(1, 3, 2.0)
+    params, cv_score, fits = c.tuning
+    assert params["min_samples_leaf"] in (1, 8) and params["max_features"] == "sqrt"
+    assert 0 <= cv_score <= 1 and fits == 6 and len(trees) == 3 and c.rf_params == params
+    first = c.tuning
+    c.tune(1)  # deterministic for the same data and round: served from the cache
+    assert c.tuning == first

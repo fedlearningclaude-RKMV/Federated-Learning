@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import GridSearchCV, StratifiedKFold
 
 LEAF = -1
 
@@ -63,6 +64,24 @@ def train_local_forest(X, y, n_trees, seed, rf_params):
     """Step 3 · a fresh local Random Forest of n_trees trees with balanced class weights."""
     rf = RandomForestClassifier(n_estimators=n_trees, random_state=seed, class_weight="balanced", **rf_params)
     return rf.fit(X, y)
+
+
+def tune_forest_params(X, y, grid, folds, n_trees, seed, rf_params):
+    """Local model selection: stratified k-fold grid search on the client's training patients.
+
+    The cross-validation forests stay inside the hospital (they are never exported, so they
+    consume no DP budget); only the winning hyperparameters shape the trees that are shared.
+    Returns (best parameters, mean balanced accuracy of the best setting, number of fits).
+    """
+    base = dict(rf_params)
+    for key in grid:
+        base.pop(key, None)
+    search = GridSearchCV(RandomForestClassifier(n_estimators=n_trees, random_state=seed, class_weight="balanced",
+                                                 **base),
+                          grid, scoring="balanced_accuracy",
+                          cv=StratifiedKFold(folds, shuffle=True, random_state=seed), n_jobs=1, refit=False)
+    search.fit(X, y)
+    return {**base, **search.best_params_}, float(search.best_score_), len(search.cv_results_["params"]) * folds
 
 
 def export_tree(estimator, classes, tree_id, client_id):
